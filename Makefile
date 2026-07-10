@@ -1,7 +1,7 @@
 CC      := cc
 CFLAGS  := -Wall -Wextra -O2 -Iinclude
 LDFLAGS := -Llib
-LDLIBS  := -ltetrissh -lhtttp -ltetrisbrain -lssl -lcrypto -lpthread
+LDLIBS  := -ltetrissh -lhtttp -lballotbrain -lssl -lcrypto -lpthread
 OPENSSL := $(shell brew --prefix openssl)
 CFLAGS  += -I$(OPENSSL)/include
 LDFLAGS += -L$(OPENSSL)/lib
@@ -9,14 +9,14 @@ LDFLAGS += -L$(OPENSSL)/lib
 BIN_DIR := bin
 LIB_DIR := lib
 
-LIBS := $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libtetrisbrain.a
+LIBS := $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotbrain.a
 
 # tetrish system programs (sys, ...) compiled as standalone binaries, PA1-style.
 TETRISH_LIB_SRCS := $(wildcard src/tetrish/lib/*.c)
 SYSPROG_SRCS     := $(wildcard src/tetrish/system_programs/*.c)
 SYSPROG_BINS     := $(SYSPROG_SRCS:src/tetrish/system_programs/%.c=$(BIN_DIR)/%)
 
-BINS := tetrish $(BIN_DIR)/tetrisd $(BIN_DIR)/tetrislogd $(BIN_DIR)/tetrisctl $(BIN_DIR)/tetrisu $(SYSPROG_BINS)
+BINS := tetrish $(BIN_DIR)/ballotd $(BIN_DIR)/tetrislogd $(BIN_DIR)/ballotctl $(BIN_DIR)/ballotu $(SYSPROG_BINS)
 
 .PHONY: all clean dirs
 all: dirs $(LIBS) $(BINS)
@@ -27,11 +27,11 @@ dirs:
 # === Libraries ===
 LIBTETRISSH_SRCS    := $(wildcard src/libtetrissh/*.c)
 LIBHTTTP_SRCS       := $(wildcard src/libhtttp/*.c)
-LIBTETRISBRAIN_SRCS := $(wildcard src/libtetrisbrain/*.c)
+LIBBALLOTBRAIN_SRCS := $(wildcard src/libballotbrain/*.c)
 
 LIBTETRISSH_OBJS    := $(LIBTETRISSH_SRCS:.c=.o)
 LIBHTTTP_OBJS       := $(LIBHTTTP_SRCS:.c=.o)
-LIBTETRISBRAIN_OBJS := $(LIBTETRISBRAIN_SRCS:.c=.o)
+LIBBALLOTBRAIN_OBJS := $(LIBBALLOTBRAIN_SRCS:.c=.o)
 
 # Pattern rule: compile .c -> .o
 %.o: %.c
@@ -43,7 +43,7 @@ $(LIB_DIR)/libtetrissh.a: $(LIBTETRISSH_OBJS)
 $(LIB_DIR)/libhtttp.a: $(LIBHTTTP_OBJS)
 	ar rcs $@ $^
 
-$(LIB_DIR)/libtetrisbrain.a: $(LIBTETRISBRAIN_OBJS)
+$(LIB_DIR)/libballotbrain.a: $(LIBBALLOTBRAIN_OBJS)
 	ar rcs $@ $^
 
 # === Binaries ===
@@ -54,16 +54,16 @@ tetrish: $(wildcard src/tetrish/*.c) $(TETRISH_LIB_SRCS) $(LIBS)
 $(BIN_DIR)/%: src/tetrish/system_programs/%.c $(TETRISH_LIB_SRCS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@
 
-$(BIN_DIR)/tetrisd: $(wildcard src/tetrisd/*.c) $(LIBS)
+$(BIN_DIR)/ballotd: $(wildcard src/ballotd/*.c) $(LIBS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
 $(BIN_DIR)/tetrislogd: $(wildcard src/tetrislogd/*.c) $(LIBS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(BIN_DIR)/tetrisctl: $(wildcard src/tetrisctl/*.c) $(LIBS)
+$(BIN_DIR)/ballotctl: $(wildcard src/ballotctl/*.c) $(LIBS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(BIN_DIR)/tetrisu: $(wildcard src/tetrisu/*.c) $(LIBS)
+$(BIN_DIR)/ballotu: $(wildcard src/ballotu/*.c) $(LIBS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
 clean:

@@ -1,4 +1,4 @@
-#include "tetrisd/config.h"
+#include "ballotd/config.h"
 
 #include <errno.h>
 #include <stddef.h>

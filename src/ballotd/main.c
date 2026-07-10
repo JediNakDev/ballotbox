@@ -1,9 +1,9 @@
 #include <stdio.h>
-#include "tetrisd/tetrisd.h"
-#include "tetrisd/listener.h"
-#include "tetrisd/session.h"
-#include "tetrisd/worker.h"
-#include "tetrisd/game.h"
+#include "ballotd/tetrisd.h"
+#include "ballotd/listener.h"
+#include "ballotd/session.h"
+#include "ballotd/worker.h"
+#include "ballotd/game.h"
 
 int main(void) {
     printf("tetrisd\n");
