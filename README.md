@@ -4,6 +4,12 @@ BallotBox is a secure e-voting system for small orgs (clubs, coops, unions) solv
 
 ---
 
+1009098 Pitchayut Ariyachansil (Jedi)
+1009164 Phatsakorn Ukanchanakitti (Pop)
+1009195 Popsuk Sumetchoengprachya (Kenji)
+
+---
+
 - Admin: a person who runs and manages e-voting.
 - Voter: a person who casts a vote.
 - Observer: a person who is eligible to observe the voting results, under usual circumstances, a voter and an admin are also an observer.
@@ -288,7 +294,7 @@ sequenceDiagram
 | Triggers       | Voter runs the check command with their secret ballot key.                              |
 | Preconditions  | Voter holds a secret ballot key from UC-3/UC-4; results published.                      |
 | Postconditions | Voter confirms inclusion of their ballot without revealing their choice to anyone else. |
-| Error States   | -                                                                                        |
+| Error States   | -                                                                                       |
 
 **Flow**
 
