@@ -60,10 +60,14 @@ $(BIN_DIR)/ballotd: $(wildcard src/ballotd/*.c) $(LIBS)
 $(BIN_DIR)/tetrislogd: $(wildcard src/tetrislogd/*.c) $(LIBS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(BIN_DIR)/ballotctl: $(wildcard src/ballotctl/*.c) $(LIBS)
+BALLOTTUI_SRCS := $(wildcard src/ballottui/*.c)
+
+$(BIN_DIR)/ballotctl $(BIN_DIR)/ballotu: LDLIBS += -lncurses
+
+$(BIN_DIR)/ballotctl: $(wildcard src/ballotctl/*.c) $(BALLOTTUI_SRCS) $(LIBS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(BIN_DIR)/ballotu: $(wildcard src/ballotu/*.c) $(LIBS)
+$(BIN_DIR)/ballotu: $(wildcard src/ballotu/*.c) $(BALLOTTUI_SRCS) $(LIBS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
 clean:
