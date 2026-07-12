@@ -84,7 +84,7 @@ sequenceDiagram
     participant Client
     participant System
 
-    note over Admin,System: Precondition: authenticated admin session; System reachable
+    note over Admin,System: Precondition: authenticated admin session, System reachable
 
     Admin->>Client: Create Election
     Client->>System: submit configuration
@@ -314,7 +314,7 @@ sequenceDiagram
     participant Client
     participant System
 
-    note over Voter,System: Precondition: holds a secret ballot key (UC-3/UC-4); results published
+    note over Voter,System: Precondition: holds a secret ballot key (UC-3/UC-4), results published
 
     Voter->>Client: enter secret ballot key
     Client->>Client: derive receipt hash from key (hash function / KDF)
