@@ -75,5 +75,27 @@ $(BIN_DIR)/ballotctl: $(wildcard src/ballotctl/*.c) $(BALLOTTUI_SRCS) $(LIBS)
 $(BIN_DIR)/ballotu: $(wildcard src/ballotu/*.c) $(BALLOTTUI_SRCS) $(LIBS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
+# === Unit tests (Unity) ===
+UNITY_DIR   := external/2026-pa1-50005-6767/tests/unity
+TEST_SRCS   := $(wildcard tests/unit/test_*.c)
+TEST_BINS   := $(TEST_SRCS:tests/unit/%.c=$(BIN_DIR)/%)
+TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR)
+
+# libballotclient reuses symbols from libballotbrain, so it must precede it.
+TEST_LDLIBS := -L$(LIB_DIR) -lballotclient -lballotbrain
+
+$(BIN_DIR)/test_%: tests/unit/test_%.c $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a
+	$(CC) $(TEST_CFLAGS) $< $(UNITY_DIR)/unity.c -o $@ $(TEST_LDLIBS)
+
+.PHONY: test
+test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS)
+	@fail=0; \
+	for t in $(TEST_BINS); do \
+	  echo "== $$t =="; \
+	  $$t || fail=1; \
+	done; \
+	if [ $$fail -ne 0 ]; then echo "SOME UNIT TESTS FAILED"; exit 1; fi; \
+	echo "ALL UNIT TESTS PASSED"
+
 clean:
 	rm -rf $(BIN_DIR)/* $(LIB_DIR)/*.a src/*/*.o
