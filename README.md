@@ -319,6 +319,19 @@ sequenceDiagram
     end
 ```
 
+### Decision table: vote command (UC-3 / UC-4)
+
+| ~                                        | 1   | 2   | 3   | 4   | 5   |
+| ---------------------------------------- | --- | --- | --- | --- | --- |
+| joined                                   | N   | Y   | Y   | Y   | Y   |
+| has prior ballot                         | -   | N   | N   | Y   | Y   |
+| election open                            | -   | N   | Y   | N   | Y   |
+| **actions**                              |     |     |     |     |     |
+| must join first                          | X   |     |     |     |     |
+| rejected (closed)                        |     | X   |     | X   |     |
+| cast (UC-3), receipt                     |     |     | X   |     |     |
+| update (UC-4), supersede + fresh receipt |     |     |     |     | X   |
+
 ### UC-5: View Result
 
 | Field          | Detail                                                                         |
