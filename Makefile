@@ -1,7 +1,7 @@
 CC      := cc
 CFLAGS  := -Wall -Wextra -O2 -Iinclude
 LDFLAGS := -Llib
-LDLIBS  := -ltetrissh -lhtttp -lballotbrain -lssl -lcrypto -lpthread
+LDLIBS  := -ltetrissh -lhtttp -lballotclient -lballotbrain -lssl -lcrypto -lpthread
 OPENSSL := $(shell brew --prefix openssl)
 CFLAGS  += -I$(OPENSSL)/include
 LDFLAGS += -L$(OPENSSL)/lib
@@ -9,7 +9,7 @@ LDFLAGS += -L$(OPENSSL)/lib
 BIN_DIR := bin
 LIB_DIR := lib
 
-LIBS := $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotbrain.a
+LIBS := $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a
 
 # tetrish system programs (sys, ...) compiled as standalone binaries, PA1-style.
 TETRISH_LIB_SRCS := $(wildcard src/tetrish/lib/*.c)
@@ -25,13 +25,15 @@ dirs:
 	@mkdir -p $(BIN_DIR) $(LIB_DIR) var/log var/run
 
 # === Libraries ===
-LIBTETRISSH_SRCS    := $(wildcard src/libtetrissh/*.c)
-LIBHTTTP_SRCS       := $(wildcard src/libhtttp/*.c)
-LIBBALLOTBRAIN_SRCS := $(wildcard src/libballotbrain/*.c)
+LIBTETRISSH_SRCS     := $(wildcard src/libtetrissh/*.c)
+LIBHTTTP_SRCS        := $(wildcard src/libhtttp/*.c)
+LIBBALLOTBRAIN_SRCS  := $(wildcard src/libballotbrain/*.c)
+LIBBALLOTCLIENT_SRCS := $(wildcard src/libballotclient/*.c)
 
-LIBTETRISSH_OBJS    := $(LIBTETRISSH_SRCS:.c=.o)
-LIBHTTTP_OBJS       := $(LIBHTTTP_SRCS:.c=.o)
-LIBBALLOTBRAIN_OBJS := $(LIBBALLOTBRAIN_SRCS:.c=.o)
+LIBTETRISSH_OBJS     := $(LIBTETRISSH_SRCS:.c=.o)
+LIBHTTTP_OBJS        := $(LIBHTTTP_SRCS:.c=.o)
+LIBBALLOTBRAIN_OBJS  := $(LIBBALLOTBRAIN_SRCS:.c=.o)
+LIBBALLOTCLIENT_OBJS := $(LIBBALLOTCLIENT_SRCS:.c=.o)
 
 # Pattern rule: compile .c -> .o
 %.o: %.c
@@ -44,6 +46,9 @@ $(LIB_DIR)/libhtttp.a: $(LIBHTTTP_OBJS)
 	ar rcs $@ $^
 
 $(LIB_DIR)/libballotbrain.a: $(LIBBALLOTBRAIN_OBJS)
+	ar rcs $@ $^
+
+$(LIB_DIR)/libballotclient.a: $(LIBBALLOTCLIENT_OBJS)
 	ar rcs $@ $^
 
 # === Binaries ===
