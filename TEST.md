@@ -129,7 +129,7 @@ Every error state and alternative flow declared in the README is claimed by at l
 ### Strategy: call graph-based, sandwich (bottom-up backend, top-down frontend)
 
 We use call graph-based integration rather than decomposition-based integration.
-The lexical module structure (`src/ballotu`, `src/ballotctl`, `src/ballotd`, `src/libballotbrain`) does not reflect execution: no client code calls SimpleDB directly, exactly as in the Echo example where `app` never calls `MessageModel` without going through the router.
+The lexical module structure (`src/ballotu`, `src/ballotctl`, `src/ballotd`, `src/libballotbrain`, `src/libballotclient`) does not reflect execution: no client code calls SimpleDB directly, exactly as in the Echo example where `app` never calls `MessageModel` without going through the router.
 The actual call graph is:
 
 ```
@@ -211,6 +211,14 @@ Pass criterion: every expected output holds in a single uninterrupted scripted r
 ---
 
 ## 4. Timeline
+
+> **Note on partial completion (by design).**
+> The logic libraries (`libballotbrain`, `libballotclient`) are implemented first, with their three external dependencies stubbed behind seams: persistence (SimpleDB), transport (`libtetrissh` / `libhtttp`), and cryptography.
+> Consequently, not every unit test above can be implemented yet.
+> Cases that only exercise pure logic - the config validator, the state-transition table, the vote-routing rules, and the join classifier - are testable as soon as the libraries land.
+> Cases that require reading state back (nonce replay, ballot versioning and supersession, tally, hash lookup, and the DB-backed refusal partitions) are deferred to the SimpleDB milestone; cases that require a real session or real ciphertext are deferred to the transport and crypto milestones.
+> Tests are authored by a separate pass after the libraries stabilise, to keep the test design independent of the implementation.
+> The deferred cases are tracked as progression tests (expected to fail until their backing seam is implemented).
 
 Testing follows the iterative life cycle model: each iteration runs unit then integration tests for the components built in that iteration, closes with **regression testing** (re-run all suites passed in previous iterations) and **progression testing** (pre-run upcoming cases, which are expected to fail until their feature lands).
 
