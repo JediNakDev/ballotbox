@@ -82,7 +82,7 @@ sequenceDiagram
     participant ballotd
     participant SimpleDB
 
-    note over Admin,SimpleDB: Precondition: authenticated admin session, ballotd reachable
+    note over Admin, SimpleDB: Precondition: authenticated admin session, ballotd reachable
 
     alt invalid config
         Admin->>+ballotctl: fill in configuration
@@ -143,7 +143,7 @@ sequenceDiagram
     participant ballotd
     participant SimpleDB
 
-    note over Voter,ballotd: Precondition: authenticated voter session (valid client cert)
+    note over Voter, SimpleDB: Precondition: authenticated voter session (valid client cert)
 
     alt admin IP/port not found or refuse to connect
         Voter->>+ballotu: enter election details
@@ -217,7 +217,7 @@ sequenceDiagram
     participant ballotd
     participant SimpleDB
 
-    note over Voter,ballotd: Precondition: authenticated voter session
+    note over Voter, SimpleDB: Precondition: authenticated voter session
 
     alt not joined
         ballotu->>ballotu: check the voter and election
@@ -285,7 +285,7 @@ sequenceDiagram
     participant ballotd
     participant SimpleDB
 
-    note over Voter,ballotd: Precondition: authenticated voter session
+    note over Voter, SimpleDB: Precondition: authenticated voter session
 
     alt not joined
         ballotu->>ballotu: check the voter and election
@@ -419,7 +419,7 @@ sequenceDiagram
     participant ballotd
     participant SimpleDB
 
-    note over Voter,ballotd: Precondition: holds a secret ballot key (UC-3/UC-4), results published
+    note over Voter, SimpleDB: Precondition: holds a secret ballot key (UC-3/UC-4), results published
 
     alt hash not found
         Voter->>+ballotu: enter secret ballot key
