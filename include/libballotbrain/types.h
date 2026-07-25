@@ -4,7 +4,7 @@
 /*
  * libballotbrain - canonical domain model.
  *
- * These are the server-authoritative shapes for BallotBox (the `System` and
+ * These are the server-authoritative shapes for BallotBox (the `BallotdService` and
  * `Election`/`Ballot`/`BallotHash`/`Receipt` classes in the README class
  * diagram). This header is the single source of truth for the model; the
  * client library (libballotclient) reuses these types, and the eventual
@@ -36,7 +36,7 @@ typedef enum {
   BB_STATE_PUBLISHED
 } bb_state_t;
 
-/* Certificate verification outcome (Cert/CertStatus in the class diagram). */
+/* Certificate verification outcome (Certificate/CertStatus in the class diagram). */
 typedef enum {
   BB_CERT_INVALID,
   BB_CERT_EXPIRED,
@@ -93,7 +93,7 @@ typedef struct {
   char close_time[BB_TIME_LEN];
 } bb_config_t;
 
-/* An election as held by the System. */
+/* An election as held by the daemon (the Election entity class). */
 typedef struct {
   char id[BB_ID_LEN];
   char title[BB_TITLE_LEN];

@@ -3,8 +3,8 @@
 
 /*
  * libballotbrain - the daemon-side authoritative logic for BallotBox (the
- * `System` class). This is the umbrella header: consumers include it to get
- * the whole API.
+ * `BallotdService` control class). This is the umbrella header: consumers
+ * include it to get the whole API.
  *
  * Scope note: this library holds the *logic*. Storage (SimpleDB), transport
  * (libtetrissh/libhtttp) and cryptography sit behind stubbed seams (db.h,

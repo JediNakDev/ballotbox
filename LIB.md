@@ -16,7 +16,7 @@ Those are the functions whose tests are deferred to the SimpleDB milestone.
 
 ## `libballotbrain` - daemon-side authoritative logic
 
-This is the `System` class from the README.
+This is the `BallotdService` control class from the README solution class diagram.
 Public umbrella header: `include/libballotbrain/ballotbrain.h`.
 Prefix: `bb_*`.
 All fallible functions return a `bb_result_t` code; data comes back through out-parameters.
