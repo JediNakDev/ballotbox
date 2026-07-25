@@ -319,19 +319,6 @@ sequenceDiagram
     end
 ```
 
-### Decision table: vote command (UC-3 / UC-4)
-
-| ~                                        | 1   | 2   | 3   | 4   | 5   |
-| ---------------------------------------- | --- | --- | --- | --- | --- |
-| joined                                   | N   | Y   | Y   | Y   | Y   |
-| has prior ballot                         | -   | N   | N   | Y   | Y   |
-| election open                            | -   | N   | Y   | N   | Y   |
-| **actions**                              |     |     |     |     |     |
-| must join first                          | X   |     |     |     |     |
-| rejected (closed)                        |     | X   |     | X   |     |
-| cast (UC-3), receipt                     |     |     | X   |     |     |
-| update (UC-4), supersede + fresh receipt |     |     |     |     | X   |
-
 ### UC-5: View Result
 
 | Field          | Detail                                                                         |
@@ -458,51 +445,59 @@ sequenceDiagram
 
 ## Class Diagram
 
+BallotBox is implemented in C, which has no classes, so every class below maps to a struct, an opaque context handle, or a module (a header plus its translation units).
+
+### Domain Class Diagram
+
 ```mermaid
 classDiagram
     class Actor {
-        <<abstract>>
-        +certName: string
+        -certName
     }
     class Admin
     class Voter
     class Observer
 
-    Actor <|-- Admin
-    Actor <|-- Voter
-    Actor <|-- Observer
-    note for Observer "Admin and Voter are\nalso Observers by default"
-
-    class Client {
-        +openSecureSession(cert) Session
-        +presentCert(cert)
-        +displayOptions(options)
-        +encryptBallot(selection) Ballot
-        +submitBallot(ballot)
-        +displayResults(tally, hashes)
-        +displayReceipt(hash)
-    }
-
-    class System {
-        +verifyCert(cert) CertStatus
-        +checkEligibility(cert, election) bool
-        +validateConfig(config) bool
-        +createElection(config) Election
-        +transitionState(election, state)
-        +recordBallot(election, ballot) BallotHash
-        +publishResults(election)
-        +lookupHash(hash) BallotHash
+    class Certificate {
+        -name
+        -status
     }
 
     class Election {
-        +id: string
-        +title: string
-        +state: ElectionState
-        +options: string[]
-        +eligibleVoters: string[]
-        +openTime: string
-        +closeTime: string
-        +tally: int[]
+        -id
+        -title
+        -state
+        -options
+        -eligibleVoters
+        -openTime
+        -closeTime
+        -tally
+    }
+
+    class Ballot {
+        -optionIndex
+        -nonce
+        -encryptedPayload
+    }
+
+    class BallotHash {
+        -hash
+        -optionIndex
+        -version
+        -superseded
+    }
+
+    class Receipt {
+        -hash
+        -issuedAt
+    }
+
+    class VoterSession {
+        -certName
+        -joined
+        -hasBallot
+        -ballotVersion
+        -myHash
     }
 
     class ElectionState {
@@ -513,35 +508,359 @@ classDiagram
         PUBLISHED
     }
 
-    class Ballot {
-        +optionIndex: int
-        +nonce: string
-        +encryptedPayload: bytes
+    class CertStatus {
+        <<enumeration>>
+        INVALID
+        EXPIRED
+        NOT_ELIGIBLE
+        VALID
     }
 
-    class BallotHash {
-        +hash: string
-        +optionIndex: int
-        +version: int
-        +superseded: bool
+    Admin --|> Actor
+    Voter --|> Actor
+    Observer --|> Actor
+
+    Actor "1" -- "1" Certificate : identified by
+    Admin "1" -- "*" Election : manages
+    Voter "1" -- "1" VoterSession : has
+    VoterSession "*" -- "1" Election : joins
+    Observer "*" -- "*" Election : observes
+    Election "1" *-- "*" Ballot : accepts
+    Election "1" *-- "*" BallotHash : records
+    Ballot "1" -- "1" BallotHash : recorded as
+    BallotHash "1" -- "1" Receipt : issues
+    Election "1" -- "1" ElectionState : state
+    Certificate "1" -- "1" CertStatus : status
+```
+
+`BallotHash` is the only entity published in results, and it holds no voter identity: that is what makes the tally verifiable without making it traceable.
+
+### Solution Class Diagram: voter client (ballotu)
+
+```mermaid
+classDiagram
+    class VoterUI {
+        -formData: VoterFormData
+        -session: VoterSession
+        +show(msg: String)
     }
 
-    class Receipt {
-        +hash: string
-        +issuedAt: string
+    class VoterFormData {
+        -host: String
+        -port: int
+        -electionId: String
+        -optionIndex: int
+        -secretKey: String
     }
 
     class VoterSession {
-        +certName: string
-        +joinedElection: Election
-        +hasBallot: bool
-        +ballotVersion: int
-        +myHash: string
+        -certName: String
+        -joined: boolean
+        -electionId: String
+        -hasBallot: boolean
+        -ballotVersion: int
+        -myHash: String
     }
 
-    class Cert {
-        +name: string
-        +status: CertStatus
+    class VoterController {
+        +join(fd: VoterFormData) JoinOutcome
+        +routeVote(s: VoterSession) VoteAction
+        +castVote(s: VoterSession, fd: VoterFormData) Receipt
+        +updateVote(s: VoterSession, fd: VoterFormData) Receipt
+        +checkVote(fd: VoterFormData) CheckResult
+    }
+
+    class ResultsController {
+        +viewResults(id: String, certName: String) ResultView
+    }
+
+    class ClientCrypto {
+        +encryptBallot(optionIndex: int, nonce: String) Ballot
+        +deriveReceiptHash(secretKey: String) String
+    }
+
+    class SecureSession {
+        +connect(host: String, port: int, cert: Certificate) ResultStatus
+        +send(req: BallotRequest) BallotResponse
+    }
+
+    class BallotRequest {
+        -op: RequestOp
+        -certName: String
+        -electionId: String
+        -ballot: Ballot
+        -hash: String
+        -config: ElectionConfig
+    }
+
+    class BallotResponse {
+        -status: ResultStatus
+        -election: Election
+        -receipt: Receipt
+        -tally: List~int~
+        -hashes: List~BallotHash~
+        -found: boolean
+        -foundOption: int
+    }
+
+    class ResultView {
+        -tally: List~int~
+        -hashes: List~BallotHash~
+    }
+
+    class CheckResult {
+        -found: boolean
+        -optionIndex: int
+    }
+
+    class VoteAction {
+        <<enumeration>>
+        MUST_JOIN
+        CAST
+        UPDATE
+    }
+
+    class JoinOutcome {
+        <<enumeration>>
+        TIMEOUT
+        NOT_FOUND
+        NOT_ELIGIBLE
+        NOT_OPEN
+        ADMITTED
+    }
+
+    VoterUI "1" -- "1" VoterFormData : holds
+    VoterUI "1" -- "1" VoterSession : keeps
+
+    VoterUI ..> VoterController : uses
+    VoterUI ..> ResultsController : uses
+
+    VoterController ..> ClientCrypto : uses
+    VoterController ..> SecureSession : uses
+    VoterController ..> VoteAction : returns
+    VoterController ..> JoinOutcome : returns
+    VoterController ..> CheckResult : creates
+    ResultsController ..> SecureSession : uses
+    ResultsController ..> ResultView : creates
+
+    SecureSession ..> BallotRequest : uses
+    SecureSession ..> BallotResponse : creates
+```
+
+An Observer views results through this same client, so `ResultsController` serves UC-5 for both voters and observers.
+`VoterController` and `ResultsController` are stateless: the session and the form data are passed in as arguments, never stored on the controller.
+
+### Solution Class Diagram: admin client (ballotctl)
+
+```mermaid
+classDiagram
+    class AdminUI {
+        -formData: ElectionFormData
+        +show(msg: String)
+    }
+
+    class ElectionFormData {
+        -title: String
+        -options: List~String~
+        -eligibleVoters: List~String~
+        -openTime: String
+        -closeTime: String
+        -electionId: String
+    }
+
+    class AdminController {
+        +validateConfig(cfg: ElectionConfig) ResultStatus
+        +createElection(cfg: ElectionConfig) String
+        +openElection(id: String) ResultStatus
+        +closeElection(id: String) ResultStatus
+        +publishResults(id: String) ResultStatus
+    }
+
+    class ResultsController {
+        +viewResults(id: String, certName: String) ResultView
+    }
+
+    class ElectionConfig {
+        -title: String
+        -options: List~String~
+        -eligibleVoters: List~String~
+        -openTime: String
+        -closeTime: String
+        +isValid() ResultStatus
+    }
+
+    class SecureSession {
+        +connect(host: String, port: int, cert: Certificate) ResultStatus
+        +send(req: BallotRequest) BallotResponse
+    }
+
+    class BallotRequest {
+        -op: RequestOp
+        -certName: String
+        -electionId: String
+        -ballot: Ballot
+        -hash: String
+        -config: ElectionConfig
+    }
+
+    class BallotResponse {
+        -status: ResultStatus
+        -election: Election
+        -receipt: Receipt
+        -tally: List~int~
+        -hashes: List~BallotHash~
+        -found: boolean
+        -foundOption: int
+    }
+
+    class ResultView {
+        -tally: List~int~
+        -hashes: List~BallotHash~
+    }
+
+    class RequestOp {
+        <<enumeration>>
+        JOIN
+        CAST
+        UPDATE
+        RESULTS
+        CHECK
+        CREATE
+        OPEN
+        CLOSE
+        PUBLISH
+    }
+
+    AdminUI "1" -- "1" ElectionFormData : holds
+
+    AdminUI ..> AdminController : uses
+    AdminUI ..> ResultsController : uses
+
+    AdminController ..> ElectionConfig : creates
+    AdminController ..> SecureSession : uses
+    ResultsController ..> SecureSession : uses
+    ResultsController ..> ResultView : creates
+
+    SecureSession ..> BallotRequest : uses
+    SecureSession ..> BallotResponse : creates
+    BallotRequest ..> RequestOp : uses
+```
+
+`AdminController` holds no election of its own: the form data arrives as an `ElectionConfig` argument, is validated, and is passed straight to the request.
+`validateConfig` calls the daemon's own validator, so the config rules exist in exactly one place and the admin still sees the error before a round trip.
+
+`SecureSession`, `BallotRequest`, `BallotResponse`, `ResultsController`, and `ResultView` are one shared implementation (`libballotclient.a`) used by both clients; they appear in both diagrams so each stands on its own.
+
+### Solution Class Diagram: daemon tier
+
+`ballotd` runs on the admin machine and is the only tier that touches the store.
+`SecureSession` in either client calls `BallotdService` across the network.
+
+```mermaid
+classDiagram
+    class BallotdService {
+        +verifyCert(certName: String) CertStatus
+        +checkEligibility(e: Election, certName: String) boolean
+        +validateConfig(cfg: ElectionConfig) ResultStatus
+        +createElection(cfg: ElectionConfig) String
+        +transitionState(id: String, from: ElectionState, to: ElectionState) ResultStatus
+        +recordBallot(id: String, b: Ballot) Receipt
+        +publishResults(id: String) ResultStatus
+        +lookupHash(id: String, hash: String) BallotHash
+    }
+
+    class ElectionConfig {
+        -title: String
+        -options: List~String~
+        -eligibleVoters: List~String~
+        -openTime: String
+        -closeTime: String
+        +isValid() ResultStatus
+    }
+
+    class Election {
+        -id: String
+        -title: String
+        -state: ElectionState
+        -options: List~String~
+        -eligibleVoters: List~String~
+        -openTime: String
+        -closeTime: String
+        -tally: List~int~
+        +isOpen() boolean
+        +isEligible(certName: String) boolean
+        +canTransitionTo(to: ElectionState) boolean
+        +getTally() List~int~
+    }
+
+    class Ballot {
+        -certName: String
+        -nonce: String
+        -payload: byte[]
+        -payloadLen: int
+    }
+
+    class BallotHash {
+        -hash: String
+        -optionIndex: int
+        -version: int
+        -superseded: boolean
+        +supersede()
+    }
+
+    class Receipt {
+        -hash: String
+        -issuedAt: String
+        +getHash() String
+    }
+
+    class ServerCrypto {
+        +decryptBallot(b: Ballot) int
+        +issueReceipt(b: Ballot, version: int) Receipt
+    }
+
+    class BallotStore {
+        +exec(cmd: DbCommand) DbResult
+    }
+
+    class DbCommand {
+        -op: DbOperation
+        -electionId: String
+        -newState: ElectionState
+        -hashRow: BallotHash
+        -hash: String
+        -nonce: String
+        -config: ElectionConfig
+    }
+
+    class DbResult {
+        -status: ResultStatus
+        -election: Election
+        -tally: List~int~
+        -hashes: List~BallotHash~
+        -found: boolean
+    }
+
+    class DbOperation {
+        <<enumeration>>
+        INSERT_ELECTION
+        UPDATE_STATE
+        APPEND_BALLOT
+        MARK_SUPERSEDED
+        NONCE_MARK
+        GET_ELECTION
+        GET_TALLY
+        GET_HASHES
+        FIND_HASH
+        NONCE_SEEN
+    }
+
+    class ElectionState {
+        <<enumeration>>
+        DRAFT
+        OPEN
+        CLOSED
+        PUBLISHED
     }
 
     class CertStatus {
@@ -552,24 +871,43 @@ classDiagram
         VALID
     }
 
-    Admin --> Client : uses
-    Voter --> Client : uses
-    Observer --> Client : uses
-    Client --> System : secure session (libtetrissh)
+    class ResultStatus {
+        <<enumeration>>
+        OK
+        ERR_CONFIG_TITLE
+        ERR_CONFIG_OPTIONS
+        ERR_CONFIG_TIME
+        ERR_ILLEGAL_TRANSITION
+        ERR_NOT_OPEN
+        ERR_CLOSED
+        ERR_NOT_PUBLISHED
+        ERR_NOT_ELIGIBLE
+        ERR_CERT_INVALID
+        ERR_CERT_EXPIRED
+        ERR_BAD_OPTION
+        ERR_REPLAY
+        ERR_DECRYPT
+        ERR_NOT_FOUND
+        ERR_DB
+        ERR_NOT_IMPLEMENTED
+    }
 
-    Voter "1" --> "1" VoterSession : has
-    VoterSession --> Election : joins
-    VoterSession --> BallotHash : myHash
+    Election "1" *-- "*" BallotHash : records
+    Election "1" -- "1" ElectionState : state
 
-    System --> Election : manages
-    Election "1" *-- "many" BallotHash : records
-    Election "1" *-- "many" Ballot : accepts
-    Election --> ElectionState : state
+    BallotdService ..> ElectionConfig : uses
+    BallotdService ..> Election : uses
+    BallotdService ..> Ballot : uses
+    BallotdService ..> BallotHash : creates
+    BallotdService ..> Receipt : creates
+    BallotdService ..> ServerCrypto : uses
+    BallotdService ..> BallotStore : uses
+    BallotdService ..> CertStatus : returns
+    BallotdService ..> ResultStatus : returns
 
-    Ballot --> BallotHash : produces
-    BallotHash --> Receipt : issues
-
-    Client --> Cert : presents
-    System --> Cert : verifies
-    Cert --> CertStatus : status
+    ServerCrypto ..> Ballot : uses
+    ServerCrypto ..> Receipt : creates
+    BallotStore ..> DbCommand : uses
+    BallotStore ..> DbResult : creates
+    DbCommand ..> DbOperation : uses
 ```
