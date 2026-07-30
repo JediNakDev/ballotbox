@@ -102,7 +102,7 @@ int htttp_serialize_request(const htttp_request_t *req, uint8_t *out,
                             uint32_t *out_len);
 
 /* Response mirror. Adds Content-Length and Date (RFC 1123) automatically. */
-int htttp_serialize_response(const htttp_response_t *resp, uint8_t *out,
+int htttp_serialize_response(const htttp_response_t *res, uint8_t *out,
                              uint32_t *out_len);
 
 /* --- Header helpers ------------------------------------------------------- */
