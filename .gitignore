@@ -9,5 +9,6 @@ var/
 .tetrishrc
 external/tetriSH
 *.log
+log
 .cache
 compile_commands.json

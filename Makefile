@@ -1,7 +1,7 @@
 CC      := cc
 CFLAGS  := -Wall -Wextra -O2 -Iinclude
 LDFLAGS := -Llib
-LDLIBS  := -ltetrissh -lhtttp -lballotclient -lballotbrain -lcommon -lssl -lcrypto -lpthread
+LDLIBS  := -ltetrissh -lhtttp -lballotclient -lballotbrain -ltetrisdb -lcommon -lssl -lcrypto -lpthread
 OPENSSL := $(shell brew --prefix openssl)
 CFLAGS  += -I$(OPENSSL)/include
 LDFLAGS += -L$(OPENSSL)/lib
@@ -10,7 +10,7 @@ BIN_DIR := bin
 LIB_DIR := lib
 
 LIBS := $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotbrain.a \
-        $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libcommon.a
+        $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libcommon.a
 
 # tetrish system programs (sys, ...) compiled as standalone binaries, PA1-style.
 TETRISH_LIB_SRCS := $(wildcard src/tetrish/lib/*.c)
@@ -30,12 +30,14 @@ LIBTETRISSH_SRCS     := $(wildcard src/libtetrissh/*.c)
 LIBHTTTP_SRCS        := $(wildcard src/libhtttp/*.c)
 LIBBALLOTBRAIN_SRCS  := $(wildcard src/libballotbrain/*.c)
 LIBBALLOTCLIENT_SRCS := $(wildcard src/libballotclient/*.c)
+LIBTETRISDB_SRCS     := $(wildcard src/libtetrisdb/*.c)
 LIBCOMMON_SRCS       := $(wildcard src/libcommon/*.c)
 
 LIBTETRISSH_OBJS     := $(LIBTETRISSH_SRCS:.c=.o)
 LIBHTTTP_OBJS        := $(LIBHTTTP_SRCS:.c=.o)
 LIBBALLOTBRAIN_OBJS  := $(LIBBALLOTBRAIN_SRCS:.c=.o)
 LIBBALLOTCLIENT_OBJS := $(LIBBALLOTCLIENT_SRCS:.c=.o)
+LIBTETRISDB_OBJS     := $(LIBTETRISDB_SRCS:.c=.o)
 LIBCOMMON_OBJS       := $(LIBCOMMON_SRCS:.c=.o)
 
 # Pattern rule: compile .c -> .o
@@ -52,6 +54,9 @@ $(LIB_DIR)/libballotbrain.a: $(LIBBALLOTBRAIN_OBJS)
 	ar rcs $@ $^
 
 $(LIB_DIR)/libballotclient.a: $(LIBBALLOTCLIENT_OBJS)
+	ar rcs $@ $^
+
+$(LIB_DIR)/libtetrisdb.a: $(LIBTETRISDB_OBJS)
 	ar rcs $@ $^
 
 $(LIB_DIR)/libcommon.a: $(LIBCOMMON_OBJS)
@@ -96,10 +101,17 @@ TEST_LDLIBS := -L$(LIB_DIR) -lballotclient -lballotbrain -lpthread
 $(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a
 	$(CC) $(TEST_CFLAGS) $< $(UNITY_DIR)/unity.c -o $@ $(TEST_LDLIBS)
 
+# test_db is not a Unity test: it brings its own harness and lives in tests/
+# rather than tests/unit/, so it needs an explicit rule to beat the pattern
+# rule above. It spawns a real PipeRunner child and skips those cases when
+# java or the jar is missing, so it stays runnable on a machine without a JVM.
+$(BIN_DIR)/test_db: tests/test_db.c $(LIB_DIR)/libtetrisdb.a
+	$(CC) $(CFLAGS) tests/test_db.c -o $@ $(LDFLAGS) -ltetrisdb -lpthread
+
 .PHONY: test
-test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS)
+test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS) $(BIN_DIR)/test_db
 	@fail=0; \
-	for t in $(TEST_BINS); do \
+	for t in $(TEST_BINS) $(BIN_DIR)/test_db; do \
 	  echo "== $$t =="; \
 	  $$t || fail=1; \
 	done; \
