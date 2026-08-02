@@ -148,6 +148,50 @@ Precondition: real `ballotd` with seeded elections.
 
 ---
 
+## Infrastructure Test Cases
+
+### Approach
+
+These cover the two shared components ported from tetriSH: `libtetrisdb`, the C client that drives SimpleDB through a `PipeRunner` child process, and `tetrislogd`, the logging daemon.
+They are not unit tests and deliberately break the rule stated above: they use no seams, and they spawn real processes - a JVM for the D cases, the real `bin/tetrislogd` over a real Unix datagram socket for the L cases.
+The point is to test the seam implementations themselves, which is exactly what a substitute cannot stand in for.
+
+`libtetrisdb` is what will sit behind `db_exec`, so the D cases are the prerequisite evidence for the backend integration milestone (I-01..I-06): persistence across restart, injection containment, and error accounting are settled here, before any ballot-shaped case depends on them.
+
+Each file is its own binary with its own harness rather than Unity, and `make test` builds and runs both alongside the unit tests.
+The D cases that need a JVM check for `java` and the jar first and skip themselves if either is missing, so the suite still passes on a machine without a JVM - a skip is visible in the output rather than silently counted as a pass.
+
+### libtetrisdb tests
+
+Precondition: scratch directory removed before each case, so every case starts from no catalog and no data file.
+
+| ID   | Technique | Unit under test    | Purpose                          | Input / Setup                                              | Expected Output                                  | Postcondition                                        | Status | Test file |
+| ---- | --------- | ------------------ | -------------------------------- | ---------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------- | ------ | --------- |
+| D-01 | -         | `tdb_ensure_table` | Table created ready to scan      | Fresh directory, `log` schema                              | Returns 0, catalog line matches the schema       | `log.dat` is exactly one 4096-byte page, not 0 bytes | Done   | `test_db` |
+| D-02 | -         | `tdb_ensure_table` | Create is idempotent             | Create, write a byte into `log.dat`, create again           | Second call returns 0                            | One catalog line, file not truncated, byte intact    | Done   | `test_db` |
+| D-03 | -         | `tdb_quote`        | Plain text wrapped               | `hello`                                                    | `'hello'`                                        | -                                                    | Done   | `test_db` |
+| D-04 | -         | `tdb_quote`        | Embedded quote doubled           | `it's`                                                     | `'it''s'`                                        | -                                                    | Done   | `test_db` |
+| D-05 | -         | `tdb_quote`        | Injection stays one literal      | `x'); insert into log values (9);--`                       | Opens and closes with a quote, no odd quote run  | Parser can never see a second statement              | Done   | `test_db` |
+| D-06 | BVT       | `tdb_quote`        | Truncation cannot break a literal | 16 quotes into an 8-byte buffer (worst case, each doubles) | Fits the buffer, still quote-delimited           | No unterminated literal, no overflow                 | Done   | `test_db` |
+| D-07 | -         | `tdb_start` / `tdb_submit` / `tdb_stop` | Rows survive restart | Insert 2 rows, stop, restart with a `max(id)` probe    | `dropped=0`, `errors=0`, probe returns 2         | Clean shutdown flushed both rows to disk             | Done   | `test_db` |
+| D-08 | -         | `tdb_submit`       | Bad SQL counted, not swallowed   | `insert into nosuchtable ...`, then a valid insert          | `errors=1`, `dropped=0`                          | Connection survives; the later good statement lands  | Done   | `test_db` |
+
+### tetrislogd tests
+
+Precondition: daemon started per case against a scratch socket and log file, stopped and reaped at the end.
+
+| ID   | Technique | Unit under test | Purpose                          | Input / Setup                                                     | Expected Output                                           | Postcondition                                        | Status | Test file   |
+| ---- | --------- | --------------- | -------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------- | ------ | ----------- |
+| L-01 | -         | `log_send` → sink | Every level is delivered        | One record at DEBUG, INFO, WARN, ERROR                            | All four written, format args preserved                   | Timestamp prefix well-formed, sender pid recorded    | Done   | `test_logd` |
+| L-02 | ECT       | `min_level` filter | Records below threshold dropped | `-l warn`, then one record per level                              | WARN and ERROR kept, DEBUG and INFO absent                | `filtered=2` in the banner - counted, not lost       | Done   | `test_logd` |
+| L-03 | -         | Datagram validation | Hostile input cannot forge a line | Undersized and oversized datagrams; unterminated `msg` carrying a newline, a fake log line, and an ANSI escape | Record written with the newline neutered, escape byte gone | `malformed=2`, `truncated=1`; no forged line of its own | Done   | `test_logd` |
+| L-04 | -         | `SIGHUP` handler | Rotation reopens the path        | Send a record, rename the file aside, `SIGHUP`, send another      | Reopen announced in the fresh file                        | New file has only post-rotate records, old file keeps its own | Done   | `test_logd` |
+| L-05 | -         | Sender reconnect | Sender outlives the daemon       | Send with no daemon; start it; send; restart it; send again       | First send fails and is counted; both later sends succeed | Stale connected fd replaced transparently, no re-open by the caller | Done   | `test_logd` |
+| L-06 | -         | Send path under load | A full queue never blocks     | `SIGSTOP` the daemon, then send 20000 records, then `SIGCONT`     | Drops counted, every call returns                         | Whatever the kernel accepted still reaches the file  | Done   | `test_logd` |
+| L-07 | -         | `sink_bind`     | Refuses to clobber a regular file | Socket path pointing at an existing file holding `precious`      | Daemon exits 1 with a refusal message                     | File contents untouched                              | Done   | `test_logd` |
+
+---
+
 ## Timeline and milestones
 
 ### Unit tests
@@ -159,12 +203,17 @@ All unit cases run today except U-32, and they stay green as the seams are imple
 | **Available today** - all logic, seams substituted (`make test`) | U-01 .. U-31, U-33 .. U-40     | Nothing.                                                                                                                                                               |
 | **Crypto/PKI** - real keys behind the crypto seams              | U-32, plus a re-run of U-33/U-34 | U-32 tests the RSA-OAEP round trip itself, which is the one thing a substitute cannot stand in for. U-33/U-34 pass against the placeholder KDF and are re-run for real. |
 
-The seam implementations themselves (SimpleDB behind `db_exec`, libtetrissh behind `bcl_send`, OpenSSL behind the crypto seams) are covered by the integration cases below, not by unit cases.
+The seam implementations themselves (SimpleDB behind `db_exec`, libtetrissh behind `bcl_send`, OpenSSL behind the crypto seams) are covered by the integration and infrastructure cases below, not by unit cases.
+
+### Infrastructure tests
+
+D-01..D-08 and L-01..L-07 run today under `make test`, with no milestone in front of them: both components are complete and ported.
+D-07 and D-08 need a JVM and `db/dist/simpledb.jar`; on a machine with neither they skip rather than fail, so they are the only cases in this plan whose result is environment-dependent.
 
 ### Integration tests
 
 | Prerequisite feature                                              | Integration cases | Direction                        | Gate                                           |
 | ----------------------------------------------------------------- | ----------------- | -------------------------------- | ---------------------------------------------- |
-| SimpleDB behind `BallotStore.exec` (`db_exec`)                    | I-01..I-06        | Backend, bottom-up               | Persistence and concurrency cases green        |
+| SimpleDB behind `BallotStore.exec` (`db_exec`), via `libtetrisdb` | I-01..I-06        | Backend, bottom-up               | D-01..D-08 green first, then persistence and concurrency cases |
 | `ballotd` assembled + local admin channel                         | I-07, I-08        | Frontend, admin path (local)     | Invalid config surfaced; election opens        |
 | Transport: `libtetrissh` behind `SecureSession.send` (`bcl_send`) | I-09..I-15        | Frontend, voter path (encrypted) | UC-2 refusal partitions + ciphertext-only wire |
