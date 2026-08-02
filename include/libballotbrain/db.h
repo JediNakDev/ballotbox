@@ -38,7 +38,8 @@ typedef enum {
   BB_DB_GET_TALLY,        /* read: fetch tally of non-superseded ballots */
   BB_DB_GET_HASHES,       /* read: fetch published hash list */
   BB_DB_FIND_HASH,        /* read: look up one published, non-superseded hash */
-  BB_DB_NONCE_SEEN        /* read: has this nonce been consumed? */
+  BB_DB_NONCE_SEEN,       /* read: has this nonce been consumed? */
+  BB_DB_GET_PRIOR_BALLOT  /* read: this voter's current ballot version, if any */
 } bb_db_op_t;
 
 /*
@@ -51,8 +52,9 @@ typedef struct {
   char election_id[BB_ID_LEN];
   bb_state_t new_state;               /* UPDATE_STATE */
   const bb_ballot_hash_t *hash_row;   /* APPEND_BALLOT */
-  char hash[BB_HASH_LEN];             /* FIND_HASH */
+  char hash[BB_HASH_LEN];             /* FIND_HASH / MARK_SUPERSEDED */
   char nonce[BB_NONCE_LEN];           /* NONCE_MARK / NONCE_SEEN */
+  char cert_name[BB_CERT_LEN];        /* GET_PRIOR_BALLOT */
   const bb_config_t *config;          /* INSERT_ELECTION */
 } bb_db_cmd_t;
 
@@ -65,7 +67,8 @@ typedef struct {
   int tally[BB_MAX_OPTIONS];       /* GET_TALLY */
   bb_ballot_hash_t hashes[BB_MAX_VOTERS]; /* GET_HASHES */
   int hash_count;
-  int found;                       /* FIND_HASH / NONCE_SEEN: 1 if present */
+  int found;                       /* FIND_HASH / NONCE_SEEN / GET_PRIOR_BALLOT: 1 if present */
+  bb_ballot_hash_t row;            /* FIND_HASH / GET_PRIOR_BALLOT: the matching row */
 } bb_db_result_t;
 
 /*

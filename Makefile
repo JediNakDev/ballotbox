@@ -79,12 +79,15 @@ $(BIN_DIR)/ballotu: $(wildcard src/ballotu/*.c) $(BALLOTTUI_SRCS) $(LIBS)
 UNITY_DIR   := external/2026-pa1-50005-6767/tests/unity
 TEST_SRCS   := $(wildcard tests/unit/test_*.c)
 TEST_BINS   := $(TEST_SRCS:tests/unit/%.c=$(BIN_DIR)/%)
-TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR)
+TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR) -Itests/unit/support
 
 # libballotclient reuses symbols from libballotbrain, so it must precede it.
-TEST_LDLIBS := -L$(LIB_DIR) -lballotclient -lballotbrain
+# Each test defines the seams it wants to substitute; because the libraries are
+# static archives, a seam defined in the test keeps the real member out of the
+# binary (see tests/unit/support/fake_*_seams.h).
+TEST_LDLIBS := -L$(LIB_DIR) -lballotclient -lballotbrain -lpthread
 
-$(BIN_DIR)/test_%: tests/unit/test_%.c $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a
+$(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a
 	$(CC) $(TEST_CFLAGS) $< $(UNITY_DIR)/unity.c -o $@ $(TEST_LDLIBS)
 
 .PHONY: test

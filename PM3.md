@@ -8,6 +8,7 @@ The use cases, sequence diagrams, and class diagrams were revised for greater ro
 ## Use Case Implementation Status
 
 Every use case is partially implemented: the logic is written and unit tested, but none runs end to end because all six wait on the same three pieces (crypto, database, integration).
+The unit tests do not wait on those pieces - each one substitutes the store, crypto and transport seams and tests a single function against them - so the logic is verified now and the remaining work is the seams themselves.
 
 | Use Case                    | Status  | Done                                             | Waiting on            |
 | --------------------------- | ------- | ------------------------------------------------ | --------------------- |

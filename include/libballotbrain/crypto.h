@@ -19,6 +19,15 @@
 struct bb_ctx;
 
 /*
+ * Verify a certificate: chain, validity window, revocation. Placeholder today -
+ * any non-empty name verifies as VALID - because real X.509 verification needs
+ * the PKI that arrives with the transport layer. Callers (bb_join) treat the
+ * returned status as authoritative, so substituting this seam is how the
+ * INVALID / EXPIRED refusal paths are exercised.
+ */
+bb_cert_status_t bb_verify_cert(struct bb_ctx *ctx, const char *cert_name);
+
+/*
  * Decrypt and validate a submitted ballot payload, yielding the chosen option
  * index. Placeholder today: derives a deterministic index from the payload and
  * never reports BB_ERR_DECRYPT (real OAEP failure detection lands with keys).

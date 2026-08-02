@@ -1,10 +1,13 @@
 /*
- * Unit tests for libballotclient voter logic (ballotu).
- * Covers TEST.md U-33, U-34 (receipt KDF), U-35, U-36 (join classifier),
- * U-37, U-38, U-39 (vote routing), plus the full bu_classify_join partition.
+ * Unit tests for the pure voter decision functions (ballotu): vote routing,
+ * the join classifier, the check classifier, and the placeholder receipt KDF.
+ * Covers TEST.md U-33, U-34 (receipt KDF), U-37, U-38, U-39 (vote routing),
+ * U-40 (dropped-ballot classification), plus the full bu_classify_join
+ * partition. The session-flow halves of U-35..U-39 - what actually goes on the
+ * wire and what the session ends up holding - are in test_voter_flow.c.
  *
- * All targets here are pure or use the deterministic placeholder crypto seam.
- * Caveats:
+ * Nothing here needs a seam except bu_derive_receipt, which is exercised as
+ * itself. Caveats:
  *   - U-33/U-34 are placeholder-grade: bu_derive_receipt is a djb2-seeded
  *     placeholder, so determinism and distinctness hold, but carry NO
  *     cryptographic collision resistance. Strong guarantees are a crypto-
@@ -59,23 +62,6 @@ void test_U39_update_flow_selected(void) {
 
 /* ---- join classifier (UC-2 partitions) -------------------------------- */
 
-/* U-35: a transport-level failure (unreachable host / not-implemented stub)
- * classifies as a timeout. */
-void test_U35_join_timeout_on_transport_failure(void) {
-  TEST_ASSERT_EQUAL_INT(BU_JOIN_TIMEOUT, bu_classify_join(BB_ERR_NOT_IMPLEMENTED, NULL));
-}
-
-/* U-36: a not-open election classifies as not-open, both via the explicit
- * BB_ERR_NOT_OPEN status and via BB_OK with a non-OPEN election state. */
-void test_U36_join_not_open(void) {
-  TEST_ASSERT_EQUAL_INT(BU_JOIN_NOT_OPEN, bu_classify_join(BB_ERR_NOT_OPEN, NULL));
-
-  bb_election_t draft;
-  memset(&draft, 0, sizeof(draft));
-  draft.state = BB_STATE_DRAFT;
-  TEST_ASSERT_EQUAL_INT(BU_JOIN_NOT_OPEN, bu_classify_join(BB_OK, &draft));
-}
-
 /* Full partition table for bu_classify_join (all five UC-2 outcomes). */
 void test_classify_join_partition_table(void) {
   bb_election_t open_el;
@@ -108,6 +94,31 @@ void test_classify_join_partition_table(void) {
   TEST_ASSERT_EQUAL_INT(BU_JOIN_ADMITTED, bu_classify_join(BB_OK, &open_el));
 }
 
+/* ---- check-your-vote classifier (UC-6) -------------------------------- */
+
+/* U-40: a valid key whose hash the daemon cannot find is a dropped ballot, so
+ * the voter is sent down the admin escalation path. */
+void test_U40_dropped_ballot_flagged(void) {
+  /* Both shapes of "not in the tally": an explicit not-found status, and an
+   * OK answer that simply did not match. */
+  TEST_ASSERT_EQUAL_INT(BU_CHECK_DROPPED, bu_classify_check(BB_ERR_NOT_FOUND, 0));
+  TEST_ASSERT_EQUAL_INT(BU_CHECK_DROPPED, bu_classify_check(BB_OK, 0));
+}
+
+/* Full partition table for bu_classify_check. */
+void test_classify_check_partition_table(void) {
+  /* counted */
+  TEST_ASSERT_EQUAL_INT(BU_CHECK_COUNTED, bu_classify_check(BB_OK, 1));
+  /* dropped */
+  TEST_ASSERT_EQUAL_INT(BU_CHECK_DROPPED, bu_classify_check(BB_OK, 0));
+  TEST_ASSERT_EQUAL_INT(BU_CHECK_DROPPED, bu_classify_check(BB_ERR_NOT_FOUND, 0));
+  /* unavailable: a failed lookup must never be shown as a lost ballot, even if
+   * the response buffer happens to say found. */
+  TEST_ASSERT_EQUAL_INT(BU_CHECK_UNAVAILABLE, bu_classify_check(BB_ERR_NOT_IMPLEMENTED, 0));
+  TEST_ASSERT_EQUAL_INT(BU_CHECK_UNAVAILABLE, bu_classify_check(BB_ERR_NOT_PUBLISHED, 0));
+  TEST_ASSERT_EQUAL_INT(BU_CHECK_UNAVAILABLE, bu_classify_check(BB_ERR_DB, 1));
+}
+
 /* ---- receipt KDF (placeholder-grade) ---------------------------------- */
 
 /* U-33: the same secret key derives the same receipt hash both times. */
@@ -134,9 +145,9 @@ int main(void) {
   RUN_TEST(test_U37_vote_before_join_blocked);
   RUN_TEST(test_U38_cast_flow_selected);
   RUN_TEST(test_U39_update_flow_selected);
-  RUN_TEST(test_U35_join_timeout_on_transport_failure);
-  RUN_TEST(test_U36_join_not_open);
   RUN_TEST(test_classify_join_partition_table);
+  RUN_TEST(test_U40_dropped_ballot_flagged);
+  RUN_TEST(test_classify_check_partition_table);
   RUN_TEST(test_U33_receipt_kdf_deterministic);
   RUN_TEST(test_U34_distinct_keys_distinct_hashes);
   return UNITY_END();

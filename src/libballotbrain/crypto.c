@@ -33,6 +33,17 @@ static unsigned int fold(const char *s) {
   return h;
 }
 
+bb_cert_status_t bb_verify_cert(bb_ctx *ctx, const char *cert_name) {
+  /* Placeholder: real X.509 verification (chain, validity window, revocation)
+   * arrives with the PKI/transport layer. For now any non-empty name verifies;
+   * the eligible-list check in bb_join is the meaningful gate and is pure. */
+  if (cert_name == NULL || cert_name[0] == '\0') {
+    return BB_CERT_INVALID;
+  }
+  bb_log(ctx, "[cert] verify '%s' (placeholder -> VALID)", cert_name);
+  return BB_CERT_VALID;
+}
+
 bb_result_t bb_decrypt_ballot(bb_ctx *ctx, const bb_ballot_t *ballot, int *option_index) {
   if (ballot == NULL || option_index == NULL) {
     return BB_ERR_DECRYPT;

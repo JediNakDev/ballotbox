@@ -82,6 +82,16 @@ bb_result_t db_exec(bb_ctx *ctx, const bb_db_cmd_t *cmd, bb_db_result_t *out) {
       bb_log(ctx, "[db] SELECT 1 FROM nonces WHERE election_id='%s' AND nonce='%s' -- not implemented",
              cmd->election_id, cmd->nonce);
       return BB_ERR_NOT_IMPLEMENTED;
+
+    case BB_DB_GET_PRIOR_BALLOT:
+      /* The cert is bound as a parameter and deliberately not rendered: this is
+       * the one query keyed by voter identity, and logging it would create the
+       * voter-to-ballot link R2 forbids. */
+      bb_log(ctx,
+             "[db] SELECT hash, version FROM ballots WHERE election_id='%s' AND cert=? "
+             "AND superseded=0 -- not implemented",
+             cmd->election_id);
+      return BB_ERR_NOT_IMPLEMENTED;
   }
 
   return BB_ERR_DB;

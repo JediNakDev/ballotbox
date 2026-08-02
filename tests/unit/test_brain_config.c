@@ -2,9 +2,9 @@
  * Unit tests for bb_validate_config (UC-1) - the pure config validator.
  * Covers TEST.md U-01..U-05.
  *
- * These assert on return values only; the "election exists in DRAFT" / "no
- * election created" postconditions are dropped because they need DB readback,
- * which the stubbed seam does not provide yet (see TEST.md section 4).
+ * bb_validate_config is pure, so these assert on its return value alone. The
+ * matching postconditions - "election exists in DRAFT" / "no election created"
+ * - belong to bb_create_election and are asserted in test_brain_create.c.
  *
  * Caveat (U-04/U-05): bb_validate_config compares open_time/close_time with
  * strcmp - lexicographic ordering. Fixtures MUST use fixed-width ISO-8601 or

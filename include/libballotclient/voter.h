@@ -44,6 +44,37 @@ typedef enum {
  * for transport-level failures (timeout / not found). */
 bu_join_outcome_t bu_classify_join(bb_result_t status, const bb_election_t *election);
 
+/* How a check-your-vote lookup resolved (UC-6). */
+typedef enum {
+  BU_CHECK_COUNTED,    /* hash found in the published tally */
+  BU_CHECK_DROPPED,    /* hash absent: dropped ballot, escalate to the admin */
+  BU_CHECK_UNAVAILABLE /* the lookup itself failed (transport, not published) */
+} bu_check_outcome_t;
+
+/* Pure: classify a check response. `found` is only meaningful when the daemon
+ * answered BB_OK; a failed lookup is never reported as a dropped ballot. */
+bu_check_outcome_t bu_classify_check(bb_result_t status, int found);
+
+/* ---- session flows (drive the transport seam) -------------------------- */
+
+/*
+ * UC-2: join an election. Sends the JOIN request, classifies the reply, and
+ * updates `session` accordingly: admitted starts a fresh session on that
+ * election; a not-open election is still recorded locally (UC-2 alt flow 4a);
+ * every other outcome leaves the session untouched.
+ */
+bu_join_outcome_t bu_join(bcl_ctx *ctx, bu_session_t *session, const char *election_id,
+                          const char *cert_name);
+
+/*
+ * UC-3/UC-4: submit a vote. Routes on local session state (BB_ERR_NOT_JOINED
+ * and nothing sent when the voter has not joined), encrypts the selection,
+ * sends CAST or UPDATE, and on success records the receipt in the session.
+ * `out` may be NULL.
+ */
+bb_result_t bu_submit_vote(bcl_ctx *ctx, bu_session_t *session, int option_index,
+                           const char *nonce, bb_receipt_t *out);
+
 /* ---- crypto seam (placeholder) ---------------------------------------- */
 
 /* Encrypt a ballot selection with a fresh nonce. Placeholder encodes the option

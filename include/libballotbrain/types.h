@@ -77,6 +77,9 @@ typedef enum {
   /* lookup */
   BB_ERR_NOT_FOUND, /* election or hash not found */
 
+  /* client-side session state */
+  BB_ERR_NOT_JOINED, /* the voter has not joined an election yet */
+
   /* infrastructure */
   BB_ERR_DB,             /* DB seam reported a failure */
   BB_ERR_NOT_IMPLEMENTED /* deferred behind a stubbed seam (no readback yet) */
@@ -126,6 +129,17 @@ typedef struct {
   int version;
   int superseded;
 } bb_ballot_hash_t;
+
+/*
+ * The published view of an election (UC-5): the tally plus the hash rows that
+ * back it. Like bb_ballot_hash_t, it carries no voter identity.
+ */
+typedef struct {
+  int tally[BB_MAX_OPTIONS];
+  int option_count;
+  bb_ballot_hash_t hashes[BB_MAX_VOTERS];
+  int hash_count;
+} bb_results_t;
 
 /* The receipt handed back to a voter after a successful cast/update. */
 typedef struct {

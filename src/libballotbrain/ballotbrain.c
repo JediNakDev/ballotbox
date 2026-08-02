@@ -1,17 +1,19 @@
 #include "libballotbrain/ballotbrain.h"
 
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdlib.h>
 
 /*
- * Per-instance context. Deliberately tiny today: it owns the operation-log
- * sink. When SimpleDB lands it also owns the store handle; when concurrency
- * (R1) is implemented it owns the write mutex. Keeping state here (rather than
- * in file-scope globals) is what lets the later test agent run isolated cases.
+ * Per-instance context: the operation-log sink, the id allocator, and the write
+ * lock that serialises ballot recording (R1). When SimpleDB lands it also owns
+ * the store handle. Keeping state here rather than in file-scope globals is
+ * what lets each test case run an isolated instance.
  */
 struct bb_ctx {
   FILE *log;
   int next_election; /* placeholder id allocator until the DB assigns ids */
+  pthread_mutex_t write_lock;
 };
 
 bb_ctx *bb_create(void) {
@@ -21,7 +23,23 @@ bb_ctx *bb_create(void) {
   }
   ctx->log = stderr;
   ctx->next_election = 100;
+  if (pthread_mutex_init(&ctx->write_lock, NULL) != 0) {
+    free(ctx);
+    return NULL;
+  }
   return ctx;
+}
+
+void bb_write_lock(bb_ctx *ctx) {
+  if (ctx != NULL) {
+    pthread_mutex_lock(&ctx->write_lock);
+  }
+}
+
+void bb_write_unlock(bb_ctx *ctx) {
+  if (ctx != NULL) {
+    pthread_mutex_unlock(&ctx->write_lock);
+  }
 }
 
 /* Internal: allocate the next placeholder election id ("E-100", "E-101", ...).
@@ -31,6 +49,10 @@ void bb_alloc_id(bb_ctx *ctx, char out[BB_ID_LEN]) {
 }
 
 void bb_destroy(bb_ctx *ctx) {
+  if (ctx == NULL) {
+    return;
+  }
+  pthread_mutex_destroy(&ctx->write_lock);
   free(ctx);
 }
 

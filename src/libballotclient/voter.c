@@ -2,7 +2,14 @@
 
 #include <string.h>
 
-/* ---- decision logic (pure, complete) ---------------------------------- */
+/*
+ * Voter-side logic. The pure decision functions below hold the UC-2/3/4/6
+ * client rules; the session flows underneath them reach the daemon only through
+ * the transport seam (bcl_send) and the client crypto seam, so each is
+ * exercisable on its own.
+ */
+
+/* ---- decision logic (pure) -------------------------------------------- */
 
 bu_vote_action_t bu_route_vote(const bu_session_t *session) {
   if (session == NULL || !session->joined) {
@@ -37,42 +44,98 @@ bu_join_outcome_t bu_classify_join(bb_result_t status, const bb_election_t *elec
   }
 }
 
-/* ---- crypto seam (placeholder) ---------------------------------------- */
-
-static void hash_from_seed(char *out, unsigned int seed) {
-  static const char hex[] = "0123456789abcdef";
-  unsigned int state = seed * 2654435761u + 1u;
-  for (int i = 0; i < BB_HASH_LEN - 1; i++) {
-    state = state * 1103515245u + 12345u;
-    out[i] = hex[(state >> 16) & 0xF];
+bu_check_outcome_t bu_classify_check(bb_result_t status, int found) {
+  if (status == BB_OK) {
+    return found ? BU_CHECK_COUNTED : BU_CHECK_DROPPED;
   }
-  out[BB_HASH_LEN - 1] = '\0';
+  /* An explicit "no such hash" from the daemon is the dropped-ballot path
+   * (UC-6 alt flow 4a); anything else means the answer never arrived, which
+   * must not be shown to the voter as a lost ballot. */
+  if (status == BB_ERR_NOT_FOUND) {
+    return BU_CHECK_DROPPED;
+  }
+  return BU_CHECK_UNAVAILABLE;
 }
 
-bb_result_t bu_encrypt_ballot(bcl_ctx *ctx, int option_index, const char *nonce, bb_ballot_t *out) {
-  if (out == NULL || nonce == NULL || option_index < 0 || option_index > 0xFF) {
-    return BB_ERR_BAD_OPTION;
+/* ---- session flows ----------------------------------------------------- */
+
+bu_join_outcome_t bu_join(bcl_ctx *ctx, bu_session_t *session, const char *election_id,
+                          const char *cert_name) {
+  if (session == NULL || election_id == NULL || cert_name == NULL) {
+    return BU_JOIN_NOT_FOUND;
   }
-  memset(out, 0, sizeof(*out));
-  /* Placeholder: option index carried in payload[0], matching the daemon's
-   * bb_decrypt_ballot stub. Real RSA-OAEP over the election pubkey lands with
-   * keys - plaintext must never leave this buffer then (test U-32). */
-  out->payload[0] = (uint8_t)option_index;
-  out->payload_len = 1;
-  snprintf(out->nonce, BB_NONCE_LEN, "%s", nonce);
-  bcl_log(ctx, "[crypto] encrypt ballot option=%d nonce=%s (placeholder)", option_index, nonce);
-  return BB_OK;
+
+  bcl_request_t req;
+  memset(&req, 0, sizeof(req));
+  req.op = BCL_JOIN;
+  snprintf(req.election_id, BB_ID_LEN, "%s", election_id);
+  snprintf(req.cert_name, BB_CERT_LEN, "%s", cert_name);
+
+  bcl_response_t resp;
+  memset(&resp, 0, sizeof(resp));
+  bb_result_t rc = bcl_send(ctx, &req, &resp);
+  /* A transport failure outranks whatever is left in the response buffer. */
+  bb_result_t status = (rc != BB_OK) ? rc : resp.status;
+
+  bu_join_outcome_t outcome = bu_classify_join(status, &resp.election);
+  switch (outcome) {
+    case BU_JOIN_ADMITTED:
+      memset(session, 0, sizeof(*session));
+      session->joined = 1;
+      snprintf(session->cert_name, BB_CERT_LEN, "%s", cert_name);
+      snprintf(session->election_id, BB_ID_LEN, "%s", election_id);
+      break;
+    case BU_JOIN_NOT_OPEN:
+      /* UC-2 alt flow 4a: the election is real, so it is remembered locally for
+       * later, but the voter is not joined to it. */
+      session->joined = 0;
+      snprintf(session->election_id, BB_ID_LEN, "%s", election_id);
+      break;
+    default:
+      /* Timeout / not found / not eligible: no session state is created. */
+      break;
+  }
+  return outcome;
 }
 
-bb_result_t bu_derive_receipt(bcl_ctx *ctx, const char *secret_key, char out[BB_HASH_LEN]) {
-  if (secret_key == NULL || out == NULL) {
-    return BB_ERR_DB;
+bb_result_t bu_submit_vote(bcl_ctx *ctx, bu_session_t *session, int option_index,
+                           const char *nonce, bb_receipt_t *out) {
+  if (session == NULL || nonce == NULL) {
+    return BB_ERR_NOT_JOINED;
   }
-  unsigned int h = 5381u;
-  for (const char *p = secret_key; *p; p++) {
-    h = h * 33u + (unsigned char)*p;
+
+  const bu_vote_action_t action = bu_route_vote(session);
+  if (action == BU_MUST_JOIN) {
+    /* Rule 1: nothing goes on the wire before the voter has joined. */
+    return BB_ERR_NOT_JOINED;
   }
-  hash_from_seed(out, h);
-  bcl_log(ctx, "[crypto] derive receipt from key (placeholder) -> %s", out);
+
+  bcl_request_t req;
+  memset(&req, 0, sizeof(req));
+  req.op = (action == BU_UPDATE) ? BCL_UPDATE : BCL_CAST;
+  snprintf(req.election_id, BB_ID_LEN, "%s", session->election_id);
+  snprintf(req.cert_name, BB_CERT_LEN, "%s", session->cert_name);
+
+  bb_result_t er = bu_encrypt_ballot(ctx, option_index, nonce, &req.ballot);
+  if (er != BB_OK) {
+    return er;
+  }
+  snprintf(req.ballot.cert_name, BB_CERT_LEN, "%s", session->cert_name);
+
+  bcl_response_t resp;
+  memset(&resp, 0, sizeof(resp));
+  bb_result_t rc = bcl_send(ctx, &req, &resp);
+  bb_result_t status = (rc != BB_OK) ? rc : resp.status;
+  if (status != BB_OK) {
+    /* A refused or lost submission must not move local session state. */
+    return status;
+  }
+
+  session->has_ballot = 1;
+  session->ballot_version++;
+  snprintf(session->my_hash, BB_HASH_LEN, "%s", resp.receipt.hash);
+  if (out != NULL) {
+    *out = resp.receipt;
+  }
   return BB_OK;
 }
