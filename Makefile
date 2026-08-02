@@ -108,10 +108,15 @@ $(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNIT
 $(BIN_DIR)/test_db: tests/test_db.c $(LIB_DIR)/libtetrisdb.a
 	$(CC) $(CFLAGS) tests/test_db.c -o $@ $(LDFLAGS) -ltetrisdb -lpthread
 
+# Same story as test_db, plus it spawns the real bin/tetrislogd over a socket,
+# so the daemon is a build prerequisite rather than just a runtime assumption.
+$(BIN_DIR)/test_logd: tests/test_logd.c $(LIB_DIR)/libcommon.a $(BIN_DIR)/tetrislogd
+	$(CC) $(CFLAGS) tests/test_logd.c -o $@ $(LDFLAGS) -lcommon
+
 .PHONY: test
-test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS) $(BIN_DIR)/test_db
+test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd
 	@fail=0; \
-	for t in $(TEST_BINS) $(BIN_DIR)/test_db; do \
+	for t in $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd; do \
 	  echo "== $$t =="; \
 	  $$t || fail=1; \
 	done; \
