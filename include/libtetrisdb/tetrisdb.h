@@ -48,9 +48,16 @@ typedef struct {
     size_t queue_cap;          /* pending statements before dropping; 0 = default */
 } tdb_opts_t;
 
-/* Seed *opts with the built-in defaults (db/dist/simpledb.jar, var/db, "java",
- * a 256-deep queue). Always call this before overlaying rc-file values, so a
- * field the file omits still has a usable value. */
+/*
+ * Seed *opts with the built-in defaults (db/dist/simpledb.jar, "java", a
+ * 256-deep queue). Always call this before overlaying rc-file values, so a
+ * field the file omits still has a usable value.
+ *
+ * dir is deliberately left empty: two daemons accepting one built-in
+ * directory would share a catalog and eventually a .dat, which is the
+ * corruption invariant 2 exists to prevent. The caller must name its own
+ * directory, and tdb_ensure_table()/tdb_start() fail loudly if it does not.
+ */
 void tdb_opts_default(tdb_opts_t *opts);
 
 /*

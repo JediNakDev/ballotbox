@@ -32,6 +32,12 @@
 #define DEFAULT_SOCKET_PATH "var/run/tetrislogd.sock"
 #define DEFAULT_LOG_PATH "var/log/tetrisd.log"
 
+/* Where the mirrored log table lives. Named after this daemon, not "var/db",
+   because the directory identifies its owner: tetrislogd owns everything
+   under here, and a second daemon wanting a database picks its own
+   (var/db_vote, ...) rather than sharing this one. */
+#define DEFAULT_DB_DIR "var/db_log"
+
 static void on_terminate(int sig) {
   (void)sig;
   logd_stop();
@@ -77,10 +83,12 @@ static void usage(FILE *out, const char *argv0) {
           " (default debug)\n"
           "  -e          also mirror every record to stderr\n"
           "  -d dbdir    also mirror every record into SimpleDB, storing\n"
-          "              catalog.txt and log.dat in dbdir (default off)\n"
+          "              catalog.txt and log.dat in dbdir (default off,\n"
+          "              dbdir defaults to %s)\n"
           "  -D jar      simpledb.jar to run (default %s); implies -d\n"
           "  -h          show this help\n",
-          argv0, DEFAULT_SOCKET_PATH, DEFAULT_LOG_PATH, db.jar);
+          argv0, DEFAULT_SOCKET_PATH, DEFAULT_LOG_PATH, DEFAULT_DB_DIR,
+          db.jar);
 }
 
 int main(int argc, char **argv) {
@@ -94,6 +102,7 @@ int main(int argc, char **argv) {
      which the file sink depends on. */
   opts.db_enable = 0;
   tdb_opts_default(&opts.db);
+  snprintf(opts.db.dir, sizeof(opts.db.dir), "%s", DEFAULT_DB_DIR);
 
   logd_load_rc(RC_PATH, &opts);
 

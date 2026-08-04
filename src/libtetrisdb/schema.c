@@ -16,13 +16,17 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define TDB_DEFAULT_DIR "var/db"
 #define TDB_DEFAULT_JAR "db/dist/simpledb.jar"
 #define TDB_DEFAULT_JAVA "java"
 #define TDB_DEFAULT_QCAP 256
 
 void tdb_opts_default(tdb_opts_t *opts) {
-  snprintf(opts->dir, sizeof(opts->dir), "%s", TDB_DEFAULT_DIR);
+  /* dir has no default on purpose. Two daemons accepting the same built-in
+     directory would land in one catalog and, sooner or later, one .dat -
+     exactly the corruption this library exists to prevent. Naming the
+     directory is therefore the caller's decision, and an unset one is an
+     error rather than a guess. */
+  opts->dir[0] = '\0';
   snprintf(opts->jar, sizeof(opts->jar), "%s", TDB_DEFAULT_JAR);
   snprintf(opts->java, sizeof(opts->java), "%s", TDB_DEFAULT_JAVA);
   opts->queue_cap = TDB_DEFAULT_QCAP;
@@ -134,6 +138,13 @@ static int write_empty_page(int fd, const char *path) {
 int tdb_ensure_table(const char *dir, const char *name, const char *schema) {
   char catalog[PATH_MAX + 16];
   char dat[PATH_MAX + 16];
+
+  if (dir == NULL || dir[0] == '\0') {
+    fprintf(stderr, "tetrisdb: no data directory set for table '%s'"
+                    " (each daemon must own one)\n",
+            name);
+    return -1;
+  }
 
   if (mkdir_p(dir) < 0)
     return -1;

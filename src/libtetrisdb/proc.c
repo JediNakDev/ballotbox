@@ -95,6 +95,11 @@ int tdb_proc_spawn(tdb_proc_t *p, const tdb_opts_t *opts) {
   p->pid = -1;
   p->in_fd = p->out_fd = -1;
 
+  if (opts->dir[0] == '\0') {
+    fprintf(stderr, "tetrisdb: no data directory set (see tdb_opts_t.dir)\n");
+    return -1;
+  }
+
   snprintf(catalog, sizeof(catalog), "%s/catalog.txt", opts->dir);
 
   if (pipe(to_child) < 0) {

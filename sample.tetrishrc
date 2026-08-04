@@ -8,7 +8,7 @@ log_send_attempts = 2
 
 # SimpleDB mirroring (read by bin/tetrislogd)
 log_db       = on
-log_db_dir   = var/db
+log_db_dir   = var/db_log
 log_db_jar   = db/dist/simpledb.jar
 log_db_java  = java
 log_db_queue = 256

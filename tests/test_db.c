@@ -110,6 +110,20 @@ static int test_create_is_idempotent(void) {
   return 0;
 }
 
+/* A daemon that forgets to name its data directory must be told, not given a
+ * shared default that would collide with another daemon's tables. */
+static int test_dir_is_required(void) {
+  tdb_opts_t opts;
+
+  tdb_opts_default(&opts);
+  CHECK(opts.dir[0] == '\0', "tdb_opts_default invented a directory");
+  CHECK(tdb_ensure_table("", "log", TEST_SCHEMA) < 0,
+        "empty directory was accepted");
+  CHECK(tdb_start(&opts, NULL, NULL, 0) == NULL,
+        "started with no directory set");
+  return 0;
+}
+
 /* === Quoting === */
 
 static int test_quote_plain(void) {
@@ -264,6 +278,7 @@ int main(void) {
 
   run("creates catalog entry and one-page data file", test_creates_table);
   run("second create leaves existing table alone", test_create_is_idempotent);
+  run("refuses to run without a data directory", test_dir_is_required);
   run("quotes plain text", test_quote_plain);
   run("doubles embedded quotes", test_quote_doubles_quotes);
   run("keeps an injection payload inside one literal",
