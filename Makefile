@@ -9,6 +9,24 @@ LDFLAGS += -L$(OPENSSL)/lib
 BIN_DIR := bin
 LIB_DIR := lib
 
+#
+# Every header, as a prerequisite for everything that compiles.
+#
+# Without this, changing a struct in include/ rebuilds nothing: make only sees
+# the .c files. That is not a slow build, it is a WRONG one - two objects
+# compiled against different versions of the same struct link cleanly and then
+# disagree about the layout at runtime, which is a bug with no compiler error
+# and no stack trace pointing at its cause.
+#
+# Deliberately coarse: any header touches everything. At this size that costs a
+# couple of seconds, and it cannot be wrong the way a hand-maintained list of
+# per-target dependencies eventually is.
+#
+HEADERS := $(shell find include -name '*.h')
+ifeq ($(HEADERS),)
+$(warning include/ yielded no headers: builds will not react to header edits)
+endif
+
 LIBS := $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotbrain.a \
         $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libcommon.a
 
@@ -41,7 +59,7 @@ LIBTETRISDB_OBJS     := $(LIBTETRISDB_SRCS:.c=.o)
 LIBCOMMON_OBJS       := $(LIBCOMMON_SRCS:.c=.o)
 
 # Pattern rule: compile .c -> .o
-%.o: %.c
+%.o: %.c $(HEADERS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(LIB_DIR)/libtetrissh.a: $(LIBTETRISSH_OBJS)
@@ -63,27 +81,27 @@ $(LIB_DIR)/libcommon.a: $(LIBCOMMON_OBJS)
 	ar rcs $@ $^
 
 # === Binaries ===
-tetrish: $(wildcard src/tetrish/*.c) $(TETRISH_LIB_SRCS) $(LIBS)
+tetrish: $(wildcard src/tetrish/*.c) $(TETRISH_LIB_SRCS) $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
 # Each system program is its own binary, linked with the shared lib sources.
-$(BIN_DIR)/%: src/tetrish/system_programs/%.c $(TETRISH_LIB_SRCS)
+$(BIN_DIR)/%: src/tetrish/system_programs/%.c $(TETRISH_LIB_SRCS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@
 
-$(BIN_DIR)/ballotd: $(wildcard src/ballotd/*.c) $(LIBS)
+$(BIN_DIR)/ballotd: $(wildcard src/ballotd/*.c) $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(BIN_DIR)/tetrislogd: $(wildcard src/tetrislogd/*.c) $(LIBS)
+$(BIN_DIR)/tetrislogd: $(wildcard src/tetrislogd/*.c) $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
 BALLOTTUI_SRCS := $(wildcard src/ballottui/*.c)
 
 $(BIN_DIR)/ballotctl $(BIN_DIR)/ballotu: LDLIBS += -lncurses
 
-$(BIN_DIR)/ballotctl: $(wildcard src/ballotctl/*.c) $(BALLOTTUI_SRCS) $(LIBS)
+$(BIN_DIR)/ballotctl: $(wildcard src/ballotctl/*.c) $(BALLOTTUI_SRCS) $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(BIN_DIR)/ballotu: $(wildcard src/ballotu/*.c) $(BALLOTTUI_SRCS) $(LIBS)
+$(BIN_DIR)/ballotu: $(wildcard src/ballotu/*.c) $(BALLOTTUI_SRCS) $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
 # === Unit tests (Unity) ===
@@ -98,19 +116,19 @@ TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR) -Itests/unit/support
 # binary (see tests/unit/support/fake_*_seams.h).
 TEST_LDLIBS := -L$(LIB_DIR) -lballotclient -lballotbrain -lpthread
 
-$(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a
+$(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(HEADERS)
 	$(CC) $(TEST_CFLAGS) $< $(UNITY_DIR)/unity.c -o $@ $(TEST_LDLIBS)
 
 # test_db is not a Unity test: it brings its own harness and lives in tests/
 # rather than tests/unit/, so it needs an explicit rule to beat the pattern
 # rule above. It spawns a real PipeRunner child and skips those cases when
 # java or the jar is missing, so it stays runnable on a machine without a JVM.
-$(BIN_DIR)/test_db: tests/test_db.c $(LIB_DIR)/libtetrisdb.a
+$(BIN_DIR)/test_db: tests/test_db.c $(LIB_DIR)/libtetrisdb.a $(HEADERS)
 	$(CC) $(CFLAGS) tests/test_db.c -o $@ $(LDFLAGS) -ltetrisdb -lpthread
 
 # Same story as test_db, plus it spawns the real bin/tetrislogd over a socket,
 # so the daemon is a build prerequisite rather than just a runtime assumption.
-$(BIN_DIR)/test_logd: tests/test_logd.c $(LIB_DIR)/libcommon.a $(BIN_DIR)/tetrislogd
+$(BIN_DIR)/test_logd: tests/test_logd.c $(LIB_DIR)/libcommon.a $(BIN_DIR)/tetrislogd $(HEADERS)
 	$(CC) $(CFLAGS) tests/test_logd.c -o $@ $(LDFLAGS) -lcommon
 
 .PHONY: test
@@ -122,6 +140,19 @@ test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS)
 	done; \
 	if [ $$fail -ne 0 ]; then echo "SOME UNIT TESTS FAILED"; exit 1; fi; \
 	echo "ALL UNIT TESTS PASSED"
+
+# Build from scratch and drop straight into the shell. `all` alone can leave a
+# stale binary behind when a source is removed rather than changed, and the
+# shell is the entry point everything else is reached through.
+#
+# clean and all are sequenced by recursive $(MAKE), not by listing them as
+# prerequisites. As prerequisites they are unordered, so under -j the rm can
+# land in the middle of the build it was meant to precede.
+.PHONY: start
+start:
+	$(MAKE) clean
+	$(MAKE) all
+	./tetrish
 
 clean:
 	rm -rf $(BIN_DIR)/* $(LIB_DIR)/*.a src/*/*.o
