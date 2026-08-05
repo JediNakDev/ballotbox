@@ -18,6 +18,7 @@
  * Stopping it is `kill $(cat var/run/<name>.pid)`.
  */
 
+#include "tetrish/lib/daemonise.h"
 #include "tetrish/system_program.h"
 
 #define PID_DIR "var/run"
@@ -71,69 +72,24 @@ static int already_running(const char *pidfile) {
 }
 
 static int spawn_daemon(const char *pidfile, const char *errfile) {
-  pid_t pid;
-  int fd0, fd1, fd2;
-  int x;
+  /* keep_cwd, because every path this project opens - .tetrishrc, var/log,
+     var/db_log, db/dist/simpledb.jar - is relative to the project root.
+     keep_umask, so files the daemon creates keep ordinary permissions.
+     errfile, so a daemon that dies during startup says why. */
+  daemonise_opts_t opts = {
+      .keep_cwd = 1,
+      .keep_umask = 1,
+      .err_path = errfile,
+  };
 
-  pid = fork();
-  if (pid < 0) {
-    perror("first fork failed");
+  if (daemonise(&opts) < 0)
     return EXIT_FAILURE;
-  }
-  if (pid > 0) {
-    /* _exit, not exit: this process shares the caller's stdio buffers, and
-       flushing them here would print whatever they hold a second time. */
-    _exit(EXIT_SUCCESS);
-  }
-
-  /* --- intermediate process from here on --- */
-
-  /* become session leader and lose the controlling TTY. */
-  if (setsid() < 0) {
-    perror("setsid failed");
-    return EXIT_FAILURE;
-  }
-
-  /* ignore SIGCHLD (no zombies) and SIGHUP (so the daemon
-     isn't killed when this session leader terminates). */
-  signal(SIGCHLD, SIG_IGN);
-  signal(SIGHUP, SIG_IGN);
-
-  pid = fork();
-  if (pid < 0) {
-    perror("second fork failed");
-    return EXIT_FAILURE;
-  }
-  if (pid > 0) {
-    _exit(EXIT_SUCCESS);
-  }
 
   /* --- daemon process from here on --- */
 
-  /* no umask(0) - inherit the caller's, so the log file and the
-     database keep the permissions they were created with. */
-
-  /* no chdir("/") - keep the project root, or every relative path
-     the daemon opens resolves under / instead. */
-
-  /* close all open file descriptors and redirect fd 0,1,2 */
-  for (x = sysconf(_SC_OPEN_MAX); x >= 0; x--)
-    close(x);
-
-  fd0 = open("/dev/null", O_RDONLY); /* stdin  -> fd 0 */
-
-  /* stdout and stderr go to the daemon's error log instead of
-     /dev/null, so a daemon that dies during startup says why. */
-  fd1 = open(errfile, O_WRONLY | O_CREAT | O_APPEND, 0640);
-  if (fd1 < 0)
-    fd1 = open("/dev/null", O_WRONLY);
-  fd2 = dup(fd1);
-  (void)fd0;
-  (void)fd2;
-
-  /* record the pid. Written here, by the daemon itself, because
-     after two forks nobody else knows it - and getpid() is unchanged by the
-     execvp below, so it stays correct. */
+  /* Record the pid. Written here, by the daemon itself, because after two
+     forks nobody else knows it - and getpid() is unchanged by the execvp
+     below, so it stays correct. */
   FILE *f = fopen(pidfile, "w");
   if (f == NULL) {
     /* A daemon nobody can signal is worse than none. stderr is the error log

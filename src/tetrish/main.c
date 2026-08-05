@@ -1,4 +1,4 @@
-#include "tetrish/lib/rc_parser.h"
+#include "libcommon/rc.h"
 #include "tetrish/shell.h"
 
 static int run_builtin(char **cmd) {
@@ -62,7 +62,7 @@ static void process_rc_file(const char *shell_dir) {
     line[strcspn(line, "\r\n")] = '\0';
 
     const char *value = NULL;
-    rc_line_type_t type = classify_rc_line(line, &value);
+    rc_line_type_t type = rc_classify_line(line, &value);
 
     if (type == RC_LINE_EMPTY) {
       continue;
