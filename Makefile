@@ -28,7 +28,8 @@ $(warning include/ yielded no headers: builds will not react to header edits)
 endif
 
 LIBS := $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotbrain.a \
-        $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libcommon.a
+        $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libcommon.a \
+        $(LIB_DIR)/libballotui.a
 
 # tetrish system programs (sys, ...) compiled as standalone binaries, PA1-style.
 TETRISH_LIB_SRCS := $(wildcard src/tetrish/lib/*.c)
@@ -50,6 +51,7 @@ LIBBALLOTBRAIN_SRCS  := $(wildcard src/libballotbrain/*.c)
 LIBBALLOTCLIENT_SRCS := $(wildcard src/libballotclient/*.c)
 LIBTETRISDB_SRCS     := $(wildcard src/libtetrisdb/*.c)
 LIBCOMMON_SRCS       := $(wildcard src/libcommon/*.c)
+LIBBALLOTUI_SRCS     := $(wildcard src/libballotui/*.c)
 
 LIBTETRISSH_OBJS     := $(LIBTETRISSH_SRCS:.c=.o)
 LIBHTTTP_OBJS        := $(LIBHTTTP_SRCS:.c=.o)
@@ -57,6 +59,7 @@ LIBBALLOTBRAIN_OBJS  := $(LIBBALLOTBRAIN_SRCS:.c=.o)
 LIBBALLOTCLIENT_OBJS := $(LIBBALLOTCLIENT_SRCS:.c=.o)
 LIBTETRISDB_OBJS     := $(LIBTETRISDB_SRCS:.c=.o)
 LIBCOMMON_OBJS       := $(LIBCOMMON_SRCS:.c=.o)
+LIBBALLOTUI_OBJS     := $(LIBBALLOTUI_SRCS:.c=.o)
 
 # Pattern rule: compile .c -> .o
 %.o: %.c $(HEADERS)
@@ -80,6 +83,9 @@ $(LIB_DIR)/libtetrisdb.a: $(LIBTETRISDB_OBJS)
 $(LIB_DIR)/libcommon.a: $(LIBCOMMON_OBJS)
 	ar rcs $@ $^
 
+$(LIB_DIR)/libballotui.a: $(LIBBALLOTUI_OBJS)
+	ar rcs $@ $^
+
 # === Binaries ===
 tetrish: $(wildcard src/tetrish/*.c) $(TETRISH_LIB_SRCS) $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
@@ -94,14 +100,14 @@ $(BIN_DIR)/ballotd: $(wildcard src/ballotd/*.c) $(LIBS) $(HEADERS)
 $(BIN_DIR)/tetrislogd: $(wildcard src/tetrislogd/*.c) $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
-BALLOTTUI_SRCS := $(wildcard src/ballottui/*.c)
+# ballotctl and ballotu are the only binaries that draw, so -lballotui and
+# -lncurses are scoped to them rather than added to the global LDLIBS.
+$(BIN_DIR)/ballotctl $(BIN_DIR)/ballotu: LDLIBS += -lballotui -lncurses
 
-$(BIN_DIR)/ballotctl $(BIN_DIR)/ballotu: LDLIBS += -lncurses
-
-$(BIN_DIR)/ballotctl: $(wildcard src/ballotctl/*.c) $(BALLOTTUI_SRCS) $(LIBS) $(HEADERS)
+$(BIN_DIR)/ballotctl: $(wildcard src/ballotctl/*.c) $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(BIN_DIR)/ballotu: $(wildcard src/ballotu/*.c) $(BALLOTTUI_SRCS) $(LIBS) $(HEADERS)
+$(BIN_DIR)/ballotu: $(wildcard src/ballotu/*.c) $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
 # === Unit tests (Unity) ===

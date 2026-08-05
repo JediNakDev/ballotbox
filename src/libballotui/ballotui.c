@@ -1,4 +1,4 @@
-#include "ballottui/tui.h"
+#include "libballotui/ballotui.h"
 
 #include <ncurses.h>
 #include <string.h>
@@ -7,7 +7,7 @@ static char g_app[32] = "";
 static char g_actor[64] = "(not logged in)";
 static char g_state[32] = "";
 
-void tui_init(void) {
+void ballotui_init(void) {
   initscr();
   cbreak();
   noecho();
@@ -15,15 +15,15 @@ void tui_init(void) {
   curs_set(0);
 }
 
-void tui_shutdown(void) { endwin(); }
+void ballotui_shutdown(void) { endwin(); }
 
-void tui_set_status(const char *app, const char *actor, const char *state) {
+void ballotui_set_status(const char *app, const char *actor, const char *state) {
   if (app) strncpy(g_app, app, sizeof(g_app) - 1);
   if (actor) strncpy(g_actor, actor, sizeof(g_actor) - 1);
   if (state) strncpy(g_state, state, sizeof(g_state) - 1);
 }
 
-void tui_draw_status_bar(const char *hint) {
+void ballotui_draw_status_bar(const char *hint) {
   int rows, cols;
   getmaxyx(stdscr, rows, cols);
   char buf[256];
@@ -49,7 +49,7 @@ static WINDOW *frame_win(const char *title, int height, int width, int starty, i
   return win;
 }
 
-int tui_menu(const char *title, const char *items[], int count, const char *hint) {
+int ballotui_menu(const char *title, const char *items[], int count, const char *hint) {
   int rows, cols;
   getmaxyx(stdscr, rows, cols);
   int height = count + 4;
@@ -67,7 +67,7 @@ int tui_menu(const char *title, const char *items[], int count, const char *hint
       mvwprintw(win, i + 2, 2, "%-*s", width - 4, items[i]);
       if (i == sel) wattroff(win, A_REVERSE);
     }
-    tui_draw_status_bar(hint ? hint : "Up/Down move  Enter select  q back");
+    ballotui_draw_status_bar(hint ? hint : "Up/Down move  Enter select  q back");
     wrefresh(win);
     refresh();
     ch = wgetch(win);
@@ -80,7 +80,7 @@ int tui_menu(const char *title, const char *items[], int count, const char *hint
   return sel;
 }
 
-int tui_input(const char *title, const char *prompt, char *out, int out_len) {
+int ballotui_input(const char *title, const char *prompt, char *out, int out_len) {
   int rows, cols;
   getmaxyx(stdscr, rows, cols);
   int width = cols - 10 > 50 ? cols - 10 : 50;
@@ -92,13 +92,13 @@ int tui_input(const char *title, const char *prompt, char *out, int out_len) {
   mvwprintw(win, 2, 2, "%s", prompt);
 
   curs_set(1);
-  char buf[TUI_FIELD_LEN];
+  char buf[BALLOTUI_FIELD_LEN];
   memset(buf, 0, sizeof(buf));
   int max = out_len - 1 < (int)sizeof(buf) - 1 ? out_len - 1 : (int)sizeof(buf) - 1;
   int cancelled = 0;
   for (;;) {
     mvwprintw(win, 3, 2, "%-*s", width - 4, buf);
-    tui_draw_status_bar("Enter submit  Esc cancel");
+    ballotui_draw_status_bar("Enter submit  Esc cancel");
     wmove(win, 3, 2 + (int)strlen(buf));
     wrefresh(win);
     int ch = wgetch(win);
@@ -124,7 +124,7 @@ int tui_input(const char *title, const char *prompt, char *out, int out_len) {
   return 0;
 }
 
-int tui_form(const char *title, const char *labels[], char values[][TUI_FIELD_LEN], int count) {
+int ballotui_form(const char *title, const char *labels[], char values[][BALLOTUI_FIELD_LEN], int count) {
   int rows, cols;
   getmaxyx(stdscr, rows, cols);
   int width = cols - 6 > 60 ? cols - 6 : 60;
@@ -148,7 +148,7 @@ int tui_form(const char *title, const char *labels[], char values[][TUI_FIELD_LE
       mvwprintw(win, y + 1, 2, "%-*s", width - 4, values[i]);
       if (i == field) wattroff(win, A_REVERSE);
     }
-    tui_draw_status_bar("Tab/Down next field  Enter submit  Esc cancel");
+    ballotui_draw_status_bar("Tab/Down next field  Enter submit  Esc cancel");
     wmove(win, field * 2 + 3, 2 + (int)strlen(values[field]));
     wrefresh(win);
     refresh();
@@ -164,7 +164,7 @@ int tui_form(const char *title, const char *labels[], char values[][TUI_FIELD_LE
     }
     if (ch >= 32 && ch < 127) {
       int len = (int)strlen(values[field]);
-      if (len < TUI_FIELD_LEN - 1) {
+      if (len < BALLOTUI_FIELD_LEN - 1) {
         values[field][len] = (char)ch;
         values[field][len + 1] = '\0';
       }
@@ -175,7 +175,7 @@ int tui_form(const char *title, const char *labels[], char values[][TUI_FIELD_LE
   return cancelled ? -1 : 0;
 }
 
-int tui_confirm(const char *title, const char *question) {
+int ballotui_confirm(const char *title, const char *question) {
   int rows, cols;
   getmaxyx(stdscr, rows, cols);
   int width = (int)strlen(question) + 10 > 50 ? (int)strlen(question) + 10 : 50;
@@ -198,7 +198,7 @@ int tui_confirm(const char *title, const char *question) {
     wattron(win, sel == 1 ? A_REVERSE : A_NORMAL);
     mvwprintw(win, 4, 12, "%s", no);
     wattroff(win, sel == 1 ? A_REVERSE : A_NORMAL);
-    tui_draw_status_bar("Left/Right choose  Enter confirm");
+    ballotui_draw_status_bar("Left/Right choose  Enter confirm");
     wrefresh(win);
     refresh();
     ch = wgetch(win);
@@ -209,7 +209,7 @@ int tui_confirm(const char *title, const char *question) {
   return sel == 0 ? 1 : 0;
 }
 
-void tui_message(const char *title, const char *lines[], int line_count) {
+void ballotui_message(const char *title, const char *lines[], int line_count) {
   int rows, cols;
   getmaxyx(stdscr, rows, cols);
   int width = cols - 10 > 50 ? cols - 10 : 50;
@@ -220,14 +220,14 @@ void tui_message(const char *title, const char *lines[], int line_count) {
   for (int i = 0; i < line_count; i++) {
     mvwprintw(win, i + 2, 2, "%.*s", width - 4, lines[i]);
   }
-  tui_draw_status_bar("Press any key to continue");
+  ballotui_draw_status_bar("Press any key to continue");
   wrefresh(win);
   refresh();
   wgetch(win);
   delwin(win);
 }
 
-void tui_list_view(const char *title, const char *lines[], int line_count) {
+void ballotui_list_view(const char *title, const char *lines[], int line_count) {
   int rows, cols;
   getmaxyx(stdscr, rows, cols);
   int height = rows - 6 > 6 ? rows - 6 : 6;
@@ -246,7 +246,7 @@ void tui_list_view(const char *title, const char *lines[], int line_count) {
       int idx = top + row;
       if (idx < line_count) mvwprintw(win, row + 2, 2, "%.*s", width - 4, lines[idx]);
     }
-    tui_draw_status_bar("Up/Down scroll  q/Enter back");
+    ballotui_draw_status_bar("Up/Down scroll  q/Enter back");
     wrefresh(win);
     refresh();
     ch = wgetch(win);
@@ -257,7 +257,7 @@ void tui_list_view(const char *title, const char *lines[], int line_count) {
   delwin(win);
 }
 
-void tui_progress(const char *title, const char *steps[], int step_count) {
+void ballotui_progress(const char *title, const char *steps[], int step_count) {
   int rows, cols;
   getmaxyx(stdscr, rows, cols);
   int width = cols - 10 > 50 ? cols - 10 : 50;

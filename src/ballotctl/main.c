@@ -1,19 +1,19 @@
 #include <stddef.h>
 
-#include "ballottui/tui.h"
+#include "libballotui/ballotui.h"
 #include "ballotctl/mock.h"
 #include "ballotctl/screens.h"
 
 int main(void) {
   mock_init();
-  tui_init();
-  tui_set_status("ballotctl", "(not logged in)", "");
+  ballotui_init();
+  ballotui_set_status("ballotctl", "(not logged in)", "");
 
   if (screen_login()) {
     const char *items[] = {"Create election (UC-1)", "Open election", "Close election",
                             "Publish results", "View results (UC-5)", "Election status", "Quit"};
     for (;;) {
-      int sel = tui_menu("ballotctl - admin menu", items, 7, NULL);
+      int sel = ballotui_menu("ballotctl - admin menu", items, 7, NULL);
       if (sel < 0 || sel == 6) break;
       switch (sel) {
         case 0: screen_create_election(); break;
@@ -26,6 +26,6 @@ int main(void) {
     }
   }
 
-  tui_shutdown();
+  ballotui_shutdown();
   return 0;
 }
