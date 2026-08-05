@@ -276,6 +276,7 @@ public class Parser {
     }
 
     private Transaction curtrans = null;
+    private volatile Throwable lastStatementFailure = null;
     private boolean inUserTrans = false;
 
     public Query handleQueryStatement(ZQuery s, TransactionId tId)
@@ -304,8 +305,11 @@ public class Parser {
                 m.invoke(null, physicalPlan,
                         lp.getTableAliasToIdMapping(), TableStats.getStatsMap());
                 c = Class.forName("simpledb.optimizer.QueryPlanVisualizer");
+                // PrintStream.class, not System.out.getClass(): System.out is
+                // replaced by a subclass when a runner captures per-statement
+                // output, and the lookup would then miss the declared signature.
                 m = c.getMethod(
-                        "printQueryPlanTree", OpIterator.class, System.out.getClass());
+                        "printQueryPlanTree", OpIterator.class, PrintStream.class);
                 m.invoke(c.newInstance(), physicalPlan,System.out);
             } catch (ClassNotFoundException | SecurityException ignored) {
             } catch (NoSuchMethodException | InstantiationException | InvocationTargetException | IllegalAccessException | IllegalArgumentException e) {
@@ -432,21 +436,20 @@ public class Parser {
                     throw new ParsingException(
                             "No transaction is currently running");
                 curtrans.commit();
-                curtrans = null;
-                inUserTrans = false;
                 System.out.println("Transaction " + curtrans.getId().getId()
                         + " committed.");
+                curtrans = null;
+                inUserTrans = false;
                 break;
             case "ROLLBACK":
                 if (curtrans == null)
                     throw new ParsingException(
                             "No transaction is currently running");
                 curtrans.abort();
-                curtrans = null;
-                inUserTrans = false;
                 System.out.println("Transaction " + curtrans.getId().getId()
                         + " aborted.");
-
+                curtrans = null;
+                inUserTrans = false;
                 break;
             case "SET TRANSACTION":
                 if (curtrans != null)
@@ -493,7 +496,19 @@ public class Parser {
         processNextStatement(new ByteArrayInputStream(s.getBytes(StandardCharsets.UTF_8)));
     }
 
+    /**
+     * The exception that caused the most recent statement to fail, or null if
+     * it succeeded. processNextStatement swallows or rewraps nearly every
+     * failure, so this is the only way for a caller to tell apart failures
+     * that are worth retrying (a TransactionAbortedException, meaning the
+     * transaction lost a deadlock) from ones that are not (a parse error).
+     */
+    public Throwable getLastStatementFailure() {
+        return lastStatementFailure;
+    }
+
     public void processNextStatement(InputStream is) {
+        lastStatementFailure = null;
         try {
             ZqlParser p = new ZqlParser(is);
             ZStatement s = p.readStatement();
@@ -533,6 +548,7 @@ public class Parser {
                                 + curtrans.getId().getId() + " committed.");
                     }
                 } catch (Throwable a) {
+                    lastStatementFailure = a;
                     // Whenever error happens, abort the current transaction
                     if (curtrans != null) {
                         curtrans.abort();
@@ -555,11 +571,17 @@ public class Parser {
             }
 
         } catch (IOException | DbException e) {
+            if (lastStatementFailure == null)
+                lastStatementFailure = e;
             e.printStackTrace();
         } catch (simpledb.ParsingException e) {
+            if (lastStatementFailure == null)
+                lastStatementFailure = e;
             System.out
                     .println("Invalid SQL expression: \n \t" + e.getMessage());
         } catch (ParseException | TokenMgrError e) {
+            if (lastStatementFailure == null)
+                lastStatementFailure = e;
             System.out.println("Invalid SQL expression: \n \t " + e);
         }
     }
