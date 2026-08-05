@@ -45,8 +45,15 @@
             <mkdir dir="@{destdir}"/>
             <!-- avoids needing ant clean when changing interfaces -->
             <depend srcdir="@{srcdir}" destdir="@{destdir}" cache="${depcache}"/>
+            <!-- target, not just source. Without it javac emits class files
+                 for whichever JDK ant happens to run under, so a machine
+                 where ant finds JDK 25 but `java` is 17 builds a jar its own
+                 runtime refuses to load (UnsupportedClassVersionError). The
+                 C daemons exec `java -jar` from PATH, which is rarely the
+                 same JDK ant chose. -->
             <javac srcdir="@{srcdir}" destdir="@{destdir}" includeAntRuntime="no"
-                    debug="${compile.debug}" source="${sourceversion}">
+                    debug="${compile.debug}" source="${sourceversion}"
+                    target="${sourceversion}">
                 <compilerarg value="-Xlint:unchecked" />
                 <!--<compilerarg value="-Xlint:deprecation" />-->
                 <compileoptions/>

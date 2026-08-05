@@ -13,6 +13,10 @@ log
 
 # Package Files #
 *.jar
+# ...except the vendored dependencies. They are not build output: build.xml
+# and the jar manifest both reference lib/ by path, so a checkout without
+# them cannot compile SimpleDB or run it. See lib/README for licences.
+!lib/*.jar
 *.war
 *.nar
 *.ear
