@@ -126,11 +126,9 @@ public class JoinOptimizer {
             // You do not need to implement proper support for these for Lab 3.
             return card1 + cost1 + cost2;
         } else {
-            // Insert your code here.
-            // HINT: You may need to use the variable "j" if you implemented
-            // a join algorithm that's more complicated than a basic
-            // nested-loops join.
-            return -1.0;
+            // nested loops: scan the outer once, the inner once per outer tuple,
+            // and apply the predicate to every pair
+            return cost1 + card1 * cost2 + card1 * card2;
         }
     }
 
@@ -174,8 +172,25 @@ public class JoinOptimizer {
                                                    String field2PureName, int card1, int card2, boolean t1pkey,
                                                    boolean t2pkey, Map<String, TableStats> stats,
                                                    Map<String, Integer> tableAliasToId) {
-        int card = 1;
-        // some code goes here
+        int card;
+        if (joinOp == Predicate.Op.EQUALS) {
+            // With a key on one side each tuple of the other side matches at most one
+            // row, so that side bounds the result.  With no key, fall back to the
+            // standard estimate of the larger input.
+            if (t1pkey && t2pkey) {
+                card = Math.min(card1, card2);
+            } else if (t1pkey) {
+                card = card2;
+            } else if (t2pkey) {
+                card = card1;
+            } else {
+                card = Math.max(card1, card2);
+            }
+        } else {
+            // range joins have no such bound; the usual rule of thumb is a fixed
+            // fraction of the cross product
+            card = (int) (0.3 * card1 * card2);
+        }
         return card <= 0 ? 1 : card;
     }
 
@@ -236,9 +251,37 @@ public class JoinOptimizer {
             Map<String, Double> filterSelectivities, boolean explain)
             throws ParsingException {
 
-        // some code goes here
-        //Replace the following
-        return joins;
+        // Selinger-style dynamic programming: find the best plan for every subset of
+        // the joins in increasing size order, building each from the best plan for the
+        // subset one smaller.
+        PlanCache pc = new PlanCache();
+
+        for (int i = 1; i <= joins.size(); i++) {
+            for (Set<LogicalJoinNode> subset : enumerateSubsets(joins, i)) {
+                double bestCostSoFar = Double.MAX_VALUE;
+                CostCard bestPlan = new CostCard();
+                for (LogicalJoinNode toRemove : subset) {
+                    CostCard plan = computeCostAndCardOfSubplan(stats, filterSelectivities,
+                            toRemove, subset, bestCostSoFar, pc);
+                    if (plan != null) {
+                        bestCostSoFar = plan.cost;
+                        bestPlan = plan;
+                    }
+                }
+                if (bestPlan.plan != null) {
+                    pc.addPlan(subset, bestPlan.cost, bestPlan.card, bestPlan.plan);
+                }
+            }
+        }
+
+        List<LogicalJoinNode> order = pc.getOrder(new HashSet<>(joins));
+        if (order == null) {
+            order = joins;
+        }
+        if (explain) {
+            printJoins(order, pc, stats, filterSelectivities);
+        }
+        return order;
     }
 
     // ===================== Private Methods =================================

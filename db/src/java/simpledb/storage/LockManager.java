@@ -159,6 +159,19 @@ public class LockManager {
     }
 
     /**
+     * @return every page {@code tid} currently holds a lock on.
+     */
+    public synchronized Set<PageId> pagesHeldBy(TransactionId tid) {
+        Set<PageId> held = new HashSet<>();
+        for (Map.Entry<PageId, LockState> e : locks.entrySet()) {
+            if (e.getValue().holders.contains(tid)) {
+                held.add(e.getKey());
+            }
+        }
+        return held;
+    }
+
+    /**
      * Release every lock held by {@code tid}.
      */
     public synchronized void releaseAll(TransactionId tid) {

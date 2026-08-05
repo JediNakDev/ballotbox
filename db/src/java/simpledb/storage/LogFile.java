@@ -459,8 +459,81 @@ public class LogFile {
         synchronized (Database.getBufferPool()) {
             synchronized(this) {
                 preAppend();
-                // some code goes here
+
+                Long firstRecord = tidToFirstLogRecord.get(tid.getId());
+                if (firstRecord == null) {
+                    return;
+                }
+
+                // Undoing means restoring the state from before this transaction touched
+                // the page, so where it wrote a page more than once only the earliest
+                // before-image matters.
+                Map<PageId, Page> beforeImages = new HashMap<>();
+                scanLog(firstRecord, record -> {
+                    if (record.type == UPDATE_RECORD && record.tid == tid.getId()) {
+                        beforeImages.putIfAbsent(record.before.getId(), record.before);
+                    }
+                });
+
+                restorePages(beforeImages.values());
+
+                raf.seek(raf.length());
+                currentOffset = raf.getFilePointer();
             }
+        }
+    }
+
+    /** One parsed log record, as handed to a {@link LogRecordVisitor}. */
+    private static class LogRecord {
+        int type;
+        long tid;
+        Page before; // UPDATE records only
+        Page after;  // UPDATE records only
+    }
+
+    private interface LogRecordVisitor {
+        void visit(LogRecord record) throws IOException;
+    }
+
+    /**
+     * Walk the log from startOffset to the end, handing each record to visitor.
+     * Records that carry no payload of interest are skipped over rather than parsed.
+     */
+    private void scanLog(long startOffset, LogRecordVisitor visitor) throws IOException {
+        raf.seek(startOffset);
+        while (true) {
+            LogRecord record = new LogRecord();
+            try {
+                record.type = raf.readInt();
+                record.tid = raf.readLong();
+                if (record.type == UPDATE_RECORD) {
+                    record.before = readPageData(raf);
+                    record.after = readPageData(raf);
+                } else if (record.type == CHECKPOINT_RECORD) {
+                    int numActive = raf.readInt();
+                    for (int i = 0; i < numActive; i++) {
+                        raf.readLong();
+                        raf.readLong();
+                    }
+                }
+                raf.readLong(); // offset at which this record began
+            } catch (EOFException e) {
+                return;
+            }
+            // outside the try, so a failure in the visitor is not mistaken for EOF
+            visitor.visit(record);
+        }
+    }
+
+    /**
+     * Write the given page images back over whatever is currently on disk, and drop
+     * the stale copies from the buffer pool so later reads pick the images up.
+     */
+    private void restorePages(Collection<Page> images) throws IOException {
+        for (Page p : images) {
+            PageId pid = p.getId();
+            Database.getBufferPool().discardPage(pid);
+            Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(p);
         }
     }
 
@@ -486,7 +559,30 @@ public class LogFile {
         synchronized (Database.getBufferPool()) {
             synchronized (this) {
                 recoveryUndecided = false;
-                // some code goes here
+
+                // A first pass works out which transactions committed, so the second can
+                // decide each update record's fate as it meets it.
+                Set<Long> committed = new HashSet<>();
+                scanLog(LONG_SIZE, record -> {
+                    if (record.type == COMMIT_RECORD) {
+                        committed.add(record.tid);
+                    }
+                });
+
+                // Apply the log in order, taking the after-image where the transaction
+                // committed and the before-image where it did not.  Committed and
+                // aborted transactions routinely interleave on the same page, so the
+                // final state has to be settled record by record; deferring all the
+                // undos to the end would roll back commits that came after them.
+                scanLog(LONG_SIZE, record -> {
+                    if (record.type == UPDATE_RECORD) {
+                        Page image = committed.contains(record.tid) ? record.after : record.before;
+                        restorePages(Collections.singletonList(image));
+                    }
+                });
+
+                raf.seek(raf.length());
+                currentOffset = raf.getFilePointer();
             }
          }
     }
