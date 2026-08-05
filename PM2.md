@@ -8,7 +8,7 @@ There are no changes to the requirements. Some use cases were rewritten to be mo
 
 | Features                                      | Owner          | Status                                                                 |
 | --------------------------------------------- | -------------- | ---------------------------------------------------------------------- |
-| Client (ballotui, ballotu, and ballotctl)     | Jedi           | Completed (UI demo running on mock data; backend integration pending)  |
+| Client (tetrisui, ballotu, and ballotctl)     | Jedi           | Completed (UI demo running on mock data; backend integration pending)  |
 | Shell (tetrish)                               | Jedi           | Completed                                                              |
 | Connectivity (libtetrishtttp and libtetrissh) | Popsuk         | In progress (base implementation completed in CSE PA2; integration into BallotBox upcoming) |
 | System (ballotd)                              | Kenji          | In progress                                                            |

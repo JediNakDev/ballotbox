@@ -39,7 +39,7 @@ That logic is instead demonstrated through the unit test suite, which exercises 
 
 | Feature                                   | Owner          | Status                                                |
 | ----------------------------------------- | -------------- | ----------------------------------------------------- |
-| Client (ballotui, ballotu, and ballotctl) | Jedi           | Completed (operating on mock data)                    |
+| Client (tetrisui, ballotu, and ballotctl) | Jedi           | Completed (operating on mock data)                    |
 | Shell (tetrish)                           | Jedi           | Completed                                             |
 | Connectivity (libtetrissh)                | Pop            | Completed                                             |
 | System (ballotd)                          | Kenji          | Integration in progress (core logic largely complete) |

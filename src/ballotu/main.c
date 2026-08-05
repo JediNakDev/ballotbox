@@ -1,19 +1,19 @@
 #include <stddef.h>
 
-#include "libballotui/ballotui.h"
+#include "libtetrisui/tetrisui.h"
 #include "ballotu/mock.h"
 #include "ballotu/screens.h"
 
 int main(void) {
   mock_init();
-  ballotui_init();
-  ballotui_set_status("ballotu", "(not logged in)", "");
+  tetrisui_init();
+  tetrisui_set_status("ballotu", "(not logged in)", "");
 
   if (screen_login()) {
     const char *items[] = {"Join election (UC-2)", "Cast vote (UC-3)", "Update vote (UC-4)",
                             "View results (UC-5)", "Check your vote (UC-6)", "Quit"};
     for (;;) {
-      int sel = ballotui_menu("ballotu - voter menu", items, 6, NULL);
+      int sel = tetrisui_menu("ballotu - voter menu", items, 6, NULL);
       if (sel < 0 || sel == 5) break;
       switch (sel) {
         case 0: screen_join_election(); break;
@@ -25,6 +25,6 @@ int main(void) {
     }
   }
 
-  ballotui_shutdown();
+  tetrisui_shutdown();
   return 0;
 }

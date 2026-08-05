@@ -26,6 +26,27 @@ The **two-adapter rule**: one adapter means a hypothetical seam, two means a
 real one.
 Do not introduce a seam until something actually varies across it.
 
+## What the names mean
+
+The prefix on a module says who owns it, and it is the first thing to check
+before renaming anything.
+
+- **`tetris*` and `htttp*`** are shared with the tetriSH project.
+  They are vendored by copy, not by submodule, and the copies are kept
+  byte-identical in both trees: `libtetrissh`, `libhtttp`, `libtetrisdb`,
+  `libtetrisui`, `tetrislogd`, `tetrish` itself.
+  A fix belongs in both repositories, and keeping the files identical is what
+  makes "has this landed on the other side yet" a plain `diff`.
+- **`ballot*`** is this project only: `libballotbrain`, `libballotclient`,
+  `ballotd`, `ballotctl`, `ballotu`.
+  Nothing in tetriSH may depend on these.
+- **`libcommon`** is shared too, and predates the convention.
+
+So the direction of a rename is decided by ownership, not by which repository
+you happen to be sitting in.
+Renaming a shared module to `ballot*` would fork it: the two copies stop being
+comparable, and the next fix has to be ported by hand instead of copied.
+
 ## The modules
 
 | Module | Interface | Depth |
@@ -34,7 +55,7 @@ Do not introduce a seam until something actually varies across it.
 | `libcommon` logging | `log_open`, `log_send`, level parsing | deep |
 | `libcommon` rc | `rc_load`, `rc_classify_line` | deep |
 | `tetrislogd` | 4 functions | deep |
-| `libballotui` | 11 widgets | moderate |
+| `libtetrisui` | 11 widgets | moderate |
 | `tetrish/lib` | `perms`, daemonising | moderate |
 | `libtetrissh`, `libhtttp`, `libballotbrain`, `libballotclient` | out of scope here | - |
 
@@ -143,20 +164,25 @@ one caller belongs where that caller is.
 only caller is the shell, which does link `libcommon`, so keeping it in
 `tetrish/lib` bought nothing and cost a duplicated grammar.
 
-### libballotui - moderate depth, and that is correct
+### libtetrisui - moderate depth, and that is correct
 
-Eleven widget functions is a wide interface for 277 lines of implementation,
+Fourteen widget functions is a wide interface for 478 lines of implementation,
 which by the ratio test looks shallow.
 The ratio test is the wrong test.
 Each widget hides a full ncurses interaction - window creation, the key loop,
 echo and cursor state, teardown - and `ballotctl` and `ballotu` between them
-call these from about sixty sites.
-Delete the module and sixty call sites grow an ncurses dependency.
+call these from 56 sites.
+Delete the module and 56 call sites grow an ncurses dependency.
 It earns its keep.
 
-It is built as `lib/libballotui.a` rather than compiled into both binaries as
+It is built as `lib/libtetrisui.a` rather than compiled into both binaries as
 loose sources, so the seam between "what the screens say" and "how anything is
 drawn" is named in the build, not just in the directory layout.
+
+Every widget is MODAL: it owns the terminal and blocks in `wgetch()` until the
+user answers.
+That is safe only while nothing else needs servicing, which is why the header
+carries the warning rather than leaving each caller to rediscover it.
 
 ## Two seams that were missing
 

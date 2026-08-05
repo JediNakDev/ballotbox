@@ -1,6 +1,6 @@
 #include "ballotctl/screens.h"
 #include "ballotctl/mock.h"
-#include "libballotui/ballotui.h"
+#include "libtetrisui/tetrisui.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -9,20 +9,20 @@
 int screen_login(void) {
   for (;;) {
     char name[32] = "";
-    if (ballotui_input("ballotctl - admin login", "Enter admin cert name (Esc to quit):", name, sizeof(name)) != 0) {
+    if (tetrisui_input("ballotctl - admin login", "Enter admin cert name (Esc to quit):", name, sizeof(name)) != 0) {
       return 0;
     }
     if (strlen(name) == 0) continue;
 
     const char *steps[] = {"Opening secure session", "Presenting admin cert"};
-    ballotui_progress("Authenticating", steps, 2);
+    tetrisui_progress("Authenticating", steps, 2);
 
     if (!mock_check_admin_cert(name)) {
       const char *lines[] = {"Invalid admin cert.", "Rejected and logged."};
-      ballotui_message("Login failed", lines, 2);
+      tetrisui_message("Login failed", lines, 2);
       continue;
     }
-    ballotui_set_status("ballotctl", name, "");
+    tetrisui_set_status("ballotctl", name, "");
     return 1;
   }
 }
@@ -36,7 +36,7 @@ static int pick_election(const char *title) {
               g_elections[i].title, mock_state_str(g_elections[i].state));
     items[i] = labels[i];
   }
-  return ballotui_menu(title, items, g_election_count, NULL);
+  return tetrisui_menu(title, items, g_election_count, NULL);
 }
 
 static void split_csv(const char *src, char out[][32], int max, int *count) {
@@ -55,12 +55,12 @@ static void split_csv(const char *src, char out[][32], int max, int *count) {
 }
 
 void screen_create_election(void) {
-  char values[5][BALLOTUI_FIELD_LEN] = {"", "", "", "2026-01-01 09:00", "2026-01-08 09:00"};
+  char values[5][TETRISUI_FIELD_LEN] = {"", "", "", "2026-01-01 09:00", "2026-01-08 09:00"};
   const char *labels[5] = {"Title", "Options (comma-separated)", "Eligible voter certs (comma-separated)",
                             "Open time", "Close time"};
 
   for (;;) {
-    if (ballotui_form("Create election (UC-1)", labels, values, 5) != 0) return; /* cancelled */
+    if (tetrisui_form("Create election (UC-1)", labels, values, 5) != 0) return; /* cancelled */
 
     char opts[MOCK_MAX_OPTIONS][32];
     int opt_count;
@@ -69,18 +69,18 @@ void screen_create_election(void) {
     if (strlen(values[0]) == 0 || opt_count == 0) {
       const char *lines[] = {"Config invalid: title and options are required.",
                               "Staying in Draft - fix and retry."};
-      ballotui_message("Rejected (alt flow 4a)", lines, 2);
+      tetrisui_message("Rejected (alt flow 4a)", lines, 2);
       continue;
     }
     if (strcmp(values[3], values[4]) >= 0) {
       const char *lines[] = {"Config invalid: close time must be after open time.",
                               "Staying in Draft - fix and retry."};
-      ballotui_message("Rejected (alt flow 4a)", lines, 2);
+      tetrisui_message("Rejected (alt flow 4a)", lines, 2);
       continue;
     }
     if (g_election_count >= MOCK_MAX_ELECTIONS) {
       const char *lines[] = {"Demo limit reached: cannot create more elections."};
-      ballotui_message("Rejected", lines, 1);
+      tetrisui_message("Rejected", lines, 1);
       return;
     }
 
@@ -104,12 +104,12 @@ void screen_create_election(void) {
 
     const char *steps[] = {"Verifying admin cert", "Validating configuration",
                             "Initialising authoritative store (Draft)"};
-    ballotui_progress("Creating election", steps, 3);
+    tetrisui_progress("Creating election", steps, 3);
 
     char line1[64];
     snprintf(line1, sizeof(line1), "Election %s created in Draft.", e->id);
     const char *lines[] = {line1, "Use Open Election to make it live."};
-    ballotui_message("Created", lines, 2);
+    tetrisui_message("Created", lines, 2);
     return;
   }
 }
@@ -122,20 +122,20 @@ static void transition(election_state_t from, election_state_t to, const char *v
     char line[96];
     snprintf(line, sizeof(line), "Cannot %s: election is currently %s.", verb, mock_state_str(e->state));
     const char *lines[] = {line};
-    ballotui_message("Invalid transition", lines, 1);
+    tetrisui_message("Invalid transition", lines, 1);
     return;
   }
   char q[96];
   snprintf(q, sizeof(q), "%s election %s?", verb, e->id);
-  if (!ballotui_confirm("Confirm", q)) return;
+  if (!tetrisui_confirm("Confirm", q)) return;
 
-  ballotui_progress(verb, steps, n);
+  tetrisui_progress(verb, steps, n);
   e->state = to;
 
   char line1[64];
   snprintf(line1, sizeof(line1), "Election %s is now %s.", e->id, mock_state_str(to));
   const char *lines[] = {line1};
-  ballotui_message("Done", lines, 1);
+  tetrisui_message("Done", lines, 1);
 }
 
 void screen_open_election(void) {
@@ -156,15 +156,15 @@ void screen_publish_results(void) {
     char line[96];
     snprintf(line, sizeof(line), "Cannot publish: election is currently %s.", mock_state_str(e->state));
     const char *lines[] = {line};
-    ballotui_message("Invalid transition", lines, 1);
+    tetrisui_message("Invalid transition", lines, 1);
     return;
   }
   char q[64];
   snprintf(q, sizeof(q), "Publish results for %s?", e->id);
-  if (!ballotui_confirm("Confirm", q)) return;
+  if (!tetrisui_confirm("Confirm", q)) return;
 
   const char *steps[] = {"Aggregating tally", "Compiling ballot hash list", "Publishing result view"};
-  ballotui_progress("Publish", steps, 3);
+  tetrisui_progress("Publish", steps, 3);
 
   /* mock tally with one hash per counted vote */
   if (e->hash_count == 0) {
@@ -184,7 +184,7 @@ void screen_publish_results(void) {
   char line1[64];
   snprintf(line1, sizeof(line1), "Election %s published.", e->id);
   const char *lines[] = {line1};
-  ballotui_message("Done", lines, 1);
+  tetrisui_message("Done", lines, 1);
 }
 
 void screen_view_results(void) {
@@ -193,7 +193,7 @@ void screen_view_results(void) {
   election_t *e = &g_elections[idx];
   if (e->state != ELECTION_PUBLISHED) {
     const char *lines[] = {"Results not available."};
-    ballotui_message("Not published", lines, 1);
+    tetrisui_message("Not published", lines, 1);
     return;
   }
 
@@ -238,7 +238,7 @@ void screen_view_results(void) {
     }
     lines[n] = buf[n]; n++;
   }
-  ballotui_list_view("Election results", lines, n);
+  tetrisui_list_view("Election results", lines, n);
 }
 
 void screen_election_status(void) {
@@ -250,5 +250,5 @@ void screen_election_status(void) {
               mock_state_str(e->state), e->open_time, e->close_time);
     lines[i] = buf[i];
   }
-  ballotui_list_view("Election status", lines, g_election_count);
+  tetrisui_list_view("Election status", lines, g_election_count);
 }
