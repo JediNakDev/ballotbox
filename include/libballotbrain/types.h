@@ -137,6 +137,11 @@ typedef struct {
 typedef struct {
   int tally[BB_MAX_OPTIONS];
   int option_count;
+  char options[BB_MAX_OPTIONS][BB_OPTION_LEN]; /* names, parallel to tally[] -
+                                                 * bb_get_results already loads
+                                                 * the election to gate on
+                                                 * PUBLISHED/eligibility, so
+                                                 * this costs no extra read */
   bb_ballot_hash_t hashes[BB_MAX_VOTERS];
   int hash_count;
 } bb_results_t;

@@ -1,38 +1,225 @@
 #include "libballotclient/client.h"
+#include "internal.h"
+
+#include "libballotclient/codec.h"
+#include "libballotclient/ctl_frame.h"
+#include "libhtttp/htttp.h"
+#include "libtetrissh/tetrissh.h"
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 /*
- * Transport seam - stub implementation, and the only thing in this translation
- * unit. Keeping it alone here means a caller's tests can substitute bcl_send
- * without dragging in (or colliding with) the rest of the client core.
+ * Transport seam - real implementation. Two shapes, chosen by req->op:
  *
- * When libtetrissh / libhtttp land, only this file changes: it opens the secure
- * session, serialises the request, and fills `resp` from the reply. No
- * cert/ballot pairing is logged, preserving wire secrecy.
+ *   Voter ops (JOIN/CAST/UPDATE/RESULTS/CHECK): a persistent TCP + tetrissh
+ *   session, opened once by bcl_connect and reused by every bcl_send until
+ *   bcl_disconnect. ctx->transport is NULL until bcl_connect() succeeds;
+ *   from then on it points at this file's own private struct, holding the
+ *   session and its fd.
+ *
+ *   Admin ops (CREATE/OPEN/CLOSE/PUBLISH): a one-shot, plaintext AF_UNIX
+ *   connection to ballotd's ctl socket (ctx->ctl_path, set by
+ *   bcl_set_ctl_path) - dialled, used for exactly one request, and closed,
+ *   because that is ballotd's ctl_thread's own model (accept, one frame,
+ *   one reply, close).
+ *
+ * No cert/ballot pairing is logged in either path, preserving wire secrecy
+ * - this file never calls bcl_log with request contents.
+ *
+ * Host is a dotted-quad IPv4 address (inet_pton), not a hostname - same
+ * convention tetriSH's tetrisu/net.c uses for the same connection shape.
  */
 
-static const char *op_str(bcl_op_t op) {
-  switch (op) {
-    case BCL_JOIN: return "JOIN";
-    case BCL_CAST: return "CAST";
-    case BCL_UPDATE: return "UPDATE";
-    case BCL_RESULTS: return "RESULTS";
-    case BCL_CHECK: return "CHECK";
-    case BCL_CREATE: return "CREATE";
-    case BCL_OPEN: return "OPEN";
-    case BCL_CLOSE: return "CLOSE";
-    case BCL_PUBLISH: return "PUBLISH";
+typedef struct {
+  session_t session;
+  int fd;
+  int connected;
+} bcl_transport_t;
+
+bb_result_t bcl_connect(bcl_ctx *ctx, const char *host, int port, const char *ca_path) {
+  if (ctx == NULL || host == NULL || ca_path == NULL) {
+    return BB_ERR_DB;
   }
-  return "?";
+
+  bcl_transport_t *t = calloc(1, sizeof(*t));
+  if (t == NULL) {
+    return BB_ERR_DB;
+  }
+
+  t->fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (t->fd < 0) {
+    free(t);
+    return BB_ERR_DB;
+  }
+
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof addr);
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons((unsigned short)port);
+  if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
+    close(t->fd);
+    free(t);
+    return BB_ERR_DB;
+  }
+
+  if (connect(t->fd, (struct sockaddr *)&addr, sizeof addr) != 0) {
+    close(t->fd);
+    free(t);
+    return BB_ERR_DB;
+  }
+
+  if (session_connect(&t->session, t->fd, ca_path) != SESSION_OK) {
+    close(t->fd);
+    free(t);
+    return BB_ERR_DB;
+  }
+
+  /* Any previous transport (e.g. a stale one bcl_send already marked dead)
+   * is replaced, not leaked. */
+  bcl_disconnect(ctx);
+
+  t->connected = 1;
+  ctx->transport = t;
+  bcl_log(ctx, "[transport] connected");
+  return BB_OK;
+}
+
+void bcl_disconnect(bcl_ctx *ctx) {
+  if (ctx == NULL || ctx->transport == NULL) {
+    return;
+  }
+  bcl_transport_t *t = ctx->transport;
+  if (t->connected) {
+    session_close(&t->session);
+    close(t->fd);
+  }
+  free(t);
+  ctx->transport = NULL;
+}
+
+void bcl_set_ctl_path(bcl_ctx *ctx, const char *path) {
+  if (ctx == NULL || path == NULL) {
+    return;
+  }
+  snprintf(ctx->ctl_path, sizeof(ctx->ctl_path), "%s", path);
+}
+
+static int is_admin_op(bcl_op_t op) {
+  return op == BCL_CREATE || op == BCL_OPEN || op == BCL_CLOSE || op == BCL_PUBLISH;
+}
+
+/* Voter ops: the persistent tetrissh session opened by bcl_connect. */
+static bb_result_t send_via_session(bcl_ctx *ctx, const bcl_request_t *req, bcl_response_t *resp) {
+  if (ctx->transport == NULL) {
+    return BB_ERR_DB;
+  }
+  bcl_transport_t *t = ctx->transport;
+  if (!t->connected) {
+    return BB_ERR_DB;
+  }
+
+  uint8_t wire[SESSION_MAX_FRAME];
+  uint32_t wlen = sizeof wire;
+  if (bcl_encode_request(req, wire, &wlen) != 0) {
+    bcl_log(ctx, "[transport] encode failed for op=%d", (int)req->op);
+    return BB_ERR_DB;
+  }
+
+  if (session_send(&t->session, wire, wlen) != SESSION_OK) {
+    t->connected = 0; /* stream state is unknown; do not reuse it */
+    return BB_ERR_DB;
+  }
+
+  uint8_t rbuf[SESSION_MAX_FRAME];
+  uint32_t rlen = sizeof rbuf;
+  int rc = session_recv(&t->session, rbuf, &rlen);
+  if (rc != SESSION_OK) {
+    if (rc == SESSION_ERR_IO || rc == SESSION_ERR_TOOBIG) {
+      t->connected = 0;
+    }
+    return BB_ERR_DB;
+  }
+
+  htttp_response_t http;
+  if (htttp_parse_response(rbuf, rlen, &http) != HTTTP_OK) {
+    return BB_ERR_DB;
+  }
+  if (bcl_decode_response(&http, resp) != 0) {
+    return BB_ERR_DB;
+  }
+  return resp->status;
+}
+
+/* Admin ops: one AF_UNIX connection to ballotd's ctl socket, one request,
+ * one reply, closed - mirrors ctl_thread's own model on the daemon side. */
+static bb_result_t send_via_ctl(bcl_ctx *ctx, const bcl_request_t *req, bcl_response_t *resp) {
+  if (ctx->ctl_path[0] == '\0') {
+    return BB_ERR_DB;
+  }
+
+  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (fd < 0) {
+    return BB_ERR_DB;
+  }
+
+  struct sockaddr_un addr;
+  memset(&addr, 0, sizeof addr);
+  addr.sun_family = AF_UNIX;
+  if (snprintf(addr.sun_path, sizeof addr.sun_path, "%s", ctx->ctl_path) >=
+      (int)sizeof addr.sun_path) {
+    close(fd);
+    return BB_ERR_DB;
+  }
+
+  if (connect(fd, (struct sockaddr *)&addr, sizeof addr) != 0) {
+    close(fd);
+    return BB_ERR_DB;
+  }
+
+  uint8_t wire[CTL_MAX_FRAME];
+  uint32_t wlen = sizeof wire;
+  if (bcl_encode_request(req, wire, &wlen) != 0) {
+    bcl_log(ctx, "[transport] encode failed for op=%d", (int)req->op);
+    close(fd);
+    return BB_ERR_DB;
+  }
+
+  if (ctl_frame_write(fd, wire, wlen) != 0) {
+    close(fd);
+    return BB_ERR_DB;
+  }
+
+  uint8_t rbuf[CTL_MAX_FRAME];
+  uint32_t rlen = 0;
+  int rc = ctl_frame_read(fd, rbuf, sizeof rbuf, &rlen);
+  close(fd); /* one request per connection either way - ctl_thread already closed its end */
+  if (rc != 0) {
+    return BB_ERR_DB;
+  }
+
+  htttp_response_t http;
+  if (htttp_parse_response(rbuf, rlen, &http) != HTTTP_OK) {
+    return BB_ERR_DB;
+  }
+  if (bcl_decode_response(&http, resp) != 0) {
+    return BB_ERR_DB;
+  }
+  return resp->status;
 }
 
 bb_result_t bcl_send(bcl_ctx *ctx, const bcl_request_t *req, bcl_response_t *resp) {
-  if (req == NULL) {
+  if (resp != NULL) {
+    memset(resp, 0, sizeof(*resp));
+  }
+  if (ctx == NULL || req == NULL || resp == NULL) {
     return BB_ERR_DB;
   }
-  bcl_log(ctx, "[transport] send %s election='%s' (placeholder, not sent)", op_str(req->op),
-          req->election_id);
-  if (resp != NULL) {
-    resp->status = BB_ERR_NOT_IMPLEMENTED;
-  }
-  return BB_ERR_NOT_IMPLEMENTED;
+
+  return is_admin_op(req->op) ? send_via_ctl(ctx, req, resp) : send_via_session(ctx, req, resp);
 }

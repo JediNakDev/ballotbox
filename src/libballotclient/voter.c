@@ -84,6 +84,9 @@ bu_join_outcome_t bu_join(bcl_ctx *ctx, bu_session_t *session, const char *elect
       session->joined = 1;
       snprintf(session->cert_name, BB_CERT_LEN, "%s", cert_name);
       snprintf(session->election_id, BB_ID_LEN, "%s", election_id);
+      snprintf(session->title, BB_TITLE_LEN, "%s", resp.election.title);
+      session->option_count = resp.election.option_count;
+      memcpy(session->options, resp.election.options, sizeof(session->options));
       break;
     case BU_JOIN_NOT_OPEN:
       /* UC-2 alt flow 4a: the election is real, so it is remembered locally for
