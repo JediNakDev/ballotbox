@@ -18,6 +18,13 @@ typedef struct {
   int has_ballot;             /* 1 once a ballot has been cast */
   int ballot_version;
   char my_hash[BB_HASH_LEN];  /* latest receipt hash */
+
+  /* Remembered from the JOIN response so a caller can render a ballot menu
+   * without a second round trip - bu_join is the only place that ever sees
+   * bb_election_t.options, and it would otherwise discard them. */
+  char title[BB_TITLE_LEN];
+  char options[BB_MAX_OPTIONS][BB_OPTION_LEN];
+  int option_count;
 } bu_session_t;
 
 /* Which flow the `vote` command should take (decision table, client-side rules

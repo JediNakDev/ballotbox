@@ -291,6 +291,7 @@ bb_result_t bb_get_results(bb_ctx *ctx, const char *election_id, const char *cer
   out->option_count = election.option_count;
   for (int i = 0; i < election.option_count && i < BB_MAX_OPTIONS; i++) {
     out->tally[i] = tally_res.tally[i];
+    snprintf(out->options[i], BB_OPTION_LEN, "%s", election.options[i]);
   }
   out->hash_count = hash_res.hash_count < BB_MAX_VOTERS ? hash_res.hash_count : BB_MAX_VOTERS;
   for (int i = 0; i < out->hash_count; i++) {

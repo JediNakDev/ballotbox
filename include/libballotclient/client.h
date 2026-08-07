@@ -56,6 +56,13 @@ typedef struct {
   bb_election_t election;               /* JOIN / RESULTS */
   bb_receipt_t receipt;                 /* CAST / UPDATE */
   int tally[BB_MAX_OPTIONS];            /* RESULTS */
+  int option_count;                     /* RESULTS: how many of tally[]/options[]
+                                          * are valid - bb_results_t carries this
+                                          * but the field was missing here, so the
+                                          * wire codec had no way to know how many
+                                          * entries to send */
+  char options[BB_MAX_OPTIONS][BB_OPTION_LEN]; /* RESULTS: names, parallel to tally[] -
+                                                 * bb_results_t already carries these */
   bb_ballot_hash_t hashes[BB_MAX_VOTERS]; /* RESULTS */
   int hash_count;
   int found;                            /* CHECK: 1 if hash counted */
@@ -63,9 +70,39 @@ typedef struct {
 } bcl_response_t;
 
 /*
- * Transport seam. Sends a request over the secure session and fills `resp`.
- * Stub today: logs the intended request and returns BB_ERR_NOT_IMPLEMENTED.
- * When libtetrissh/libhtttp land, only this function changes.
+ * Open the transport: TCP-connect to host:port, then the tetrissh handshake,
+ * verified against ca_path. Must succeed before any bcl_send call. Returns
+ * BB_OK, or BB_ERR_DB on any connect/handshake failure - libballotclient's
+ * public surface is uniformly bb_result_t-typed, so a failure here is not
+ * distinguished further (unreachable host vs. rejected cert); ballotu shows
+ * one "could not reach ballotd" message either way.
+ */
+bb_result_t bcl_connect(bcl_ctx *ctx, const char *host, int port, const char *ca_path);
+
+/* Close the transport, if one is open. Safe to call on an unconnected or
+ * already-disconnected ctx. NOT called automatically by bcl_destroy (that
+ * would force every caller, including unit tests that fake bcl_send, to
+ * link the real transport) - call this yourself before bcl_destroy if you
+ * connected. */
+void bcl_disconnect(bcl_ctx *ctx);
+
+/*
+ * Name the local admin socket (ballotd's ctl_frame-framed AF_UNIX channel)
+ * for CREATE/OPEN/CLOSE/PUBLISH. Unlike bcl_connect, this opens nothing -
+ * the admin channel is one connection per request (ballotd's ctl_thread
+ * closes after every reply), so bcl_send dials fresh each time an admin op
+ * goes out. Call once before any admin-op bcl_send; ballotctl needs this
+ * and never bcl_connect (it has no voter-channel traffic at all).
+ */
+void bcl_set_ctl_path(bcl_ctx *ctx, const char *path);
+
+/*
+ * Transport seam. Routes on req->op: CREATE/OPEN/CLOSE/PUBLISH dial the
+ * admin socket named by bcl_set_ctl_path (one connection, this call only);
+ * everything else uses the persistent session opened by bcl_connect. Fills
+ * `resp`. Returns BB_ERR_DB if the relevant transport isn't configured or
+ * the round trip itself failed (nothing usable in `resp`); otherwise
+ * returns resp->status, whatever the daemon answered.
  */
 bb_result_t bcl_send(bcl_ctx *ctx, const bcl_request_t *req, bcl_response_t *resp);
 

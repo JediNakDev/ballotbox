@@ -1,0 +1,76 @@
+/*
+ * dispatch.c - see dispatch.h. Pure routing: turns a decoded bcl_request_t
+ * into arguments for exactly one libballotbrain call, and that call's
+ * out-params into a bcl_response_t. No domain logic lives here - every rule
+ * this switch could possibly need already lives in the libballotbrain
+ * sources, untouched.
+ */
+
+#include "ballotd/dispatch.h"
+
+#include <string.h>
+
+bb_result_t ballotd_dispatch(bb_ctx *ctx, const bcl_request_t *req, bcl_response_t *resp) {
+  memset(resp, 0, sizeof *resp);
+
+  switch (req->op) {
+    case BCL_CREATE: {
+      char id[BB_ID_LEN];
+      memset(id, 0, sizeof id);
+      resp->status = bb_create_election(ctx, &req->config, id);
+      if (resp->status == BB_OK) snprintf(resp->election.id, BB_ID_LEN, "%s", id);
+      return resp->status;
+    }
+
+    case BCL_OPEN:
+      resp->status = bb_transition_state(ctx, req->election_id, BB_STATE_OPEN);
+      return resp->status;
+
+    case BCL_CLOSE:
+      resp->status = bb_transition_state(ctx, req->election_id, BB_STATE_CLOSED);
+      return resp->status;
+
+    case BCL_PUBLISH:
+      resp->status = bb_publish_results(ctx, req->election_id);
+      return resp->status;
+
+    case BCL_JOIN:
+      resp->status = bb_join(ctx, req->election_id, req->cert_name, &resp->election);
+      return resp->status;
+
+    case BCL_CAST:
+    case BCL_UPDATE:
+      resp->status = bb_record_ballot(ctx, req->election_id, &req->ballot, &resp->receipt);
+      return resp->status;
+
+    case BCL_RESULTS: {
+      bb_results_t results;
+      memset(&results, 0, sizeof results);
+      resp->status = bb_get_results(ctx, req->election_id, req->cert_name, &results);
+      if (resp->status == BB_OK) {
+        resp->option_count = results.option_count;
+        memcpy(resp->tally, results.tally, sizeof resp->tally);
+        memcpy(resp->options, results.options, sizeof resp->options);
+        resp->hash_count = results.hash_count;
+        memcpy(resp->hashes, results.hashes, sizeof resp->hashes);
+      }
+      return resp->status;
+    }
+
+    case BCL_CHECK: {
+      bb_ballot_hash_t row;
+      memset(&row, 0, sizeof row);
+      resp->status = bb_lookup_hash(ctx, req->election_id, req->hash, &row);
+      resp->found = (resp->status == BB_OK) ? 1 : 0;
+      if (resp->found) resp->found_option = row.option_index;
+      return resp->status;
+    }
+
+    default:
+      /* Unreachable in practice: both intake channels reject any op outside
+       * their own set before a request ever reaches here (see session.c /
+       * control_plane.c). Kept as a defensive fallback, not a real path. */
+      resp->status = BB_ERR_NOT_IMPLEMENTED;
+      return resp->status;
+  }
+}

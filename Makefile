@@ -101,8 +101,16 @@ tetrish: $(wildcard src/tetrish/*.c) $(TETRISH_LIB_SRCS) $(LIBS) $(HEADERS)
 $(BIN_DIR)/%: src/tetrish/system_programs/%.c $(TETRISH_LIB_SRCS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@
 
-$(BIN_DIR)/ballotd: $(wildcard src/ballotd/*.c) $(LIBS) $(HEADERS)
+# ballotd and bin/ballot_session are two separate programs: ballotd forks and
+# execs bin/ballot_session per voter connection (SESSION_BIN in main.c), so
+# session.c has its own main() and must not be linked into ballotd - same
+# reasoning as tetrisd/session.c in the sibling tetriSH project. Listed
+# explicitly rather than wildcarded for exactly that reason.
+$(BIN_DIR)/ballotd: src/ballotd/main.c src/ballotd/dispatch.c src/ballotd/control_plane.c $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(BIN_DIR)/ballot_session: src/ballotd/session.c $(LIBS) $(HEADERS)
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) $(LDLIBS)
 
 $(BIN_DIR)/tetrislogd: $(wildcard src/tetrislogd/*.c) $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
@@ -114,11 +122,17 @@ $(BIN_DIR)/tetrisdb: $(wildcard src/tetrisdb/*.c) $(LIBS) $(HEADERS)
 # -lncurses are scoped to them rather than added to the global LDLIBS.
 $(BIN_DIR)/ballotctl $(BIN_DIR)/ballotu: LDLIBS += -ltetrisui -lncurses
 
-$(BIN_DIR)/ballotctl: $(wildcard src/ballotctl/*.c) $(LIBS) $(HEADERS)
-	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
+# The real client: src/ballotctl/ballotctl.c only - same reasoning as
+# ballotu below (main.c/mock.c/mock.h/screens.c stay on disk, unbuilt).
+$(BIN_DIR)/ballotctl: src/ballotctl/ballotctl.c $(LIBS) $(HEADERS)
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(BIN_DIR)/ballotu: $(wildcard src/ballotu/*.c) $(LIBS) $(HEADERS)
-	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
+# The real client: src/ballotu/ballotu.c only. main.c/mock.c/mock.h/
+# screens.c stay on disk (the old mock demo) but are deliberately excluded
+# here rather than wildcarded - both define main(), and screens.c's
+# screen_* functions would otherwise collide with ballotu.c's.
+$(BIN_DIR)/ballotu: src/ballotu/ballotu.c $(LIBS) $(HEADERS)
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) $(LDLIBS)
 
 # === Unit tests (Unity) ===
 UNITY_DIR   := external/2026-pa1-50005-6767/tests/unity
@@ -127,12 +141,21 @@ TEST_BINS   := $(TEST_SRCS:tests/unit/%.c=$(BIN_DIR)/%)
 TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR) -Itests/unit/support
 
 # libballotclient reuses symbols from libballotbrain, so it must precede it.
+# -lhtttp is for test_codec, which exercises the wire codec directly against
+# real htttp_parse/serialize rather than through a seam.
+# -ltetrissh -lssl -lcrypto: voter.c's bu_join/bu_submit_vote reference the
+# real bcl_send (transport.c) at the object-file level even when a test only
+# calls voter.c's pure functions and never a seam-calling one - the archive
+# pulls in the whole of voter.o, and now that bcl_send is real (not the old
+# no-dependency stub) that drags libtetrissh in too. A test that defines its
+# own bcl_send (fake_client_seams.h) keeps transport.o itself out, but these
+# libs still need to be on the link line for the tests that do not.
 # Each test defines the seams it wants to substitute; because the libraries are
 # static archives, a seam defined in the test keeps the real member out of the
 # binary (see tests/unit/support/fake_*_seams.h).
-TEST_LDLIBS := -L$(LIB_DIR) -lballotclient -lballotbrain -lpthread
+TEST_LDLIBS := -L$(LIB_DIR) -lballotclient -lballotbrain -lhtttp -ltetrissh -lssl -lcrypto -lpthread
 
-$(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(HEADERS)
+$(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libtetrissh.a $(HEADERS)
 	$(CC) $(TEST_CFLAGS) $< $(UNITY_DIR)/unity.c -o $@ $(TEST_LDLIBS)
 
 # test_db is not a Unity test: it brings its own harness and lives in tests/
@@ -158,6 +181,21 @@ $(BIN_DIR)/test_tetrisdb: tests/test_tetrisdb.c $(BIN_DIR)/tetrisdb $(HEADERS)
 # so the daemon is a build prerequisite rather than just a runtime assumption.
 $(BIN_DIR)/test_logd: tests/test_logd.c $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/tetrislogd $(HEADERS)
 	$(CC) $(CFLAGS) tests/test_logd.c -o $@ $(LDFLAGS) -ltetrisutil
+
+# Real-process E2E for ballotd: forks the real bin/ballotd, which itself
+# forks bin/ballot_session per voter connection, so both are build
+# prerequisites rather than just runtime assumptions (same story as
+# test_logd needing bin/tetrislogd). Needs libtetrissh/libhtttp/libballot*
+# directly for the client-side handshake and codec calls the test makes.
+$(BIN_DIR)/test_ballotd: tests/test_ballotd.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
+	$(CC) $(CFLAGS) tests/test_ballotd.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -lssl -lcrypto -lpthread
+
+# Real-process E2E for the client side of the same picture: drives the real
+# bcl_connect/bu_join/bcl_send (src/libballotclient/transport.c) - the same
+# calls ballotu.c makes - against a real bin/ballotd, rather than a
+# hand-rolled socket harness like test_ballotd.c's.
+$(BIN_DIR)/test_client_transport: tests/test_client_transport.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
+	$(CC) $(CFLAGS) tests/test_client_transport.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -lssl -lcrypto -lpthread
 
 .PHONY: test
 test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd $(BIN_DIR)/test_auth $(BIN_DIR)/test_jwt $(BIN_DIR)/test_rc $(BIN_DIR)/test_tetrisdb
