@@ -198,12 +198,41 @@ int tetrisui_input(const char *title, const char *prompt, char *out, int out_len
 int tetrisui_form(const char *title, const char *labels[],
              char values[][TETRISUI_FIELD_LEN], int count)
 {
+    return tetrisui_form_ex(title, labels, values, count, 0, NULL, 0);
+}
+
+/* Draw values[i] as '*' repeated for its length when mask bit i is set. Same
+ * width and padding as the unmasked print, so the field box never resizes
+ * when the mask flips. */
+static void draw_field_value(WINDOW *win, int y, int width,
+                             const char *value, int masked)
+{
+    if (!masked)
+    {
+        mvwprintw(win, y, 2, "%-*s", width - 4, value);
+        return;
+    }
+    char stars[TETRISUI_FIELD_LEN];
+    int len = (int)strlen(value);
+    if (len > (int)sizeof(stars) - 1)
+        len = (int)sizeof(stars) - 1;
+    memset(stars, '*', (size_t)len);
+    stars[len] = '\0';
+    mvwprintw(win, y, 2, "%-*s", width - 4, stars);
+}
+
+int tetrisui_form_ex(const char *title, const char *labels[],
+             char values[][TETRISUI_FIELD_LEN], int count,
+             unsigned mask, const char *error, int start_field)
+{
     if (count <= 0 || count > TETRISUI_MAX_FIELDS)
         return -1; /* see tetrisui_menu */
     int rows, cols;
     getmaxyx(stdscr, rows, cols);
     int width = cols - 6 > 60 ? cols - 6 : 60;
-    int height = count * 2 + 4;
+    /* One extra row for the error line, when there is one - blank otherwise
+     * rather than shrinking the form when a re-open clears it. */
+    int height = count * 2 + 4 + (error ? 1 : 0);
     int starty = (rows - height) / 2;
     int startx = (cols - width) / 2;
     WINDOW *win = frame_win(title, height, width, starty, startx);
@@ -213,7 +242,7 @@ int tetrisui_form(const char *title, const char *labels[],
     /* Not height - 1: that row IS the bottom border, and writing there erases
      * it. The same hint is on the status bar anyway. */
 
-    int field = 0;
+    int field = (start_field >= 0 && start_field < count) ? start_field : 0;
     curs_set(1);
     int cancelled = 0;
     for (;;)
@@ -221,6 +250,7 @@ int tetrisui_form(const char *title, const char *labels[],
         for (int i = 0; i < count; i++)
         {
             int y = i * 2 + 2;
+            int masked = (mask >> i) & 1u;
             if (i == field)
                 wattron(win, A_BOLD | A_UNDERLINE);
             mvwprintw(win, y, 2, "%s:", labels[i]);
@@ -228,9 +258,15 @@ int tetrisui_form(const char *title, const char *labels[],
                 wattroff(win, A_BOLD | A_UNDERLINE);
             if (i == field)
                 wattron(win, A_REVERSE);
-            mvwprintw(win, y + 1, 2, "%-*s", width - 4, values[i]);
+            draw_field_value(win, y + 1, width, values[i], masked);
             if (i == field)
                 wattroff(win, A_REVERSE);
+        }
+        if (error)
+        {
+            wattron(win, A_BOLD);
+            mvwprintw(win, count * 2 + 2, 2, "%.*s", width - 4, error);
+            wattroff(win, A_BOLD);
         }
         tetrisui_draw_status_bar("Tab/Down next field  Enter submit  Esc cancel");
         wmove(win, field * 2 + 3, 2 + (int)strlen(values[field]));

@@ -11,7 +11,8 @@
 
 #include "tetrislogd/tetrislogd.h"
 
-#include "libtetrisdb/tetrisdb.h"
+#include "libtetrisdb/pipe/db.h"
+#include "libtetrisdb/schema.h"
 
 #include <errno.h>
 #include <fcntl.h>

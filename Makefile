@@ -1,7 +1,7 @@
 CC      := cc
-CFLAGS  := -Wall -Wextra -O2 -Iinclude
+CFLAGS  := -Wall -Wextra -Werror=unused-result -O2 -Iinclude
 LDFLAGS := -Llib
-LDLIBS  := -ltetrissh -lhtttp -lballotclient -lballotbrain -ltetrisdb -lcommon -lssl -lcrypto -lpthread
+LDLIBS  := -ltetrisauth -ltetrissh -lhtttp -lballotclient -lballotbrain -ltetrisdb -lcommon -lssl -lcrypto -lpthread
 OPENSSL := $(shell brew --prefix openssl)
 CFLAGS  += -I$(OPENSSL)/include
 LDFLAGS += -L$(OPENSSL)/lib
@@ -22,12 +22,12 @@ LIB_DIR := lib
 # couple of seconds, and it cannot be wrong the way a hand-maintained list of
 # per-target dependencies eventually is.
 #
-HEADERS := $(shell find include -name '*.h')
+HEADERS := $(shell find include src -name '*.h' 2>/dev/null)
 ifeq ($(HEADERS),)
 $(warning include/ yielded no headers: builds will not react to header edits)
 endif
 
-LIBS := $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotbrain.a \
+LIBS := $(LIB_DIR)/libtetrisauth.a $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotbrain.a \
         $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libcommon.a \
         $(LIB_DIR)/libtetrisui.a
 
@@ -36,7 +36,7 @@ TETRISH_LIB_SRCS := $(wildcard src/tetrish/lib/*.c)
 SYSPROG_SRCS     := $(wildcard src/tetrish/system_programs/*.c)
 SYSPROG_BINS     := $(SYSPROG_SRCS:src/tetrish/system_programs/%.c=$(BIN_DIR)/%)
 
-BINS := tetrish $(BIN_DIR)/ballotd $(BIN_DIR)/tetrislogd $(BIN_DIR)/ballotctl $(BIN_DIR)/ballotu $(SYSPROG_BINS)
+BINS := tetrish $(BIN_DIR)/ballotd $(BIN_DIR)/tetrislogd $(BIN_DIR)/tetrisdb $(BIN_DIR)/ballotctl $(BIN_DIR)/ballotu $(SYSPROG_BINS)
 
 .PHONY: all clean dirs
 all: dirs $(LIBS) $(BINS)
@@ -45,14 +45,18 @@ dirs:
 	@mkdir -p $(BIN_DIR) $(LIB_DIR) var/log var/run
 
 # === Libraries ===
+LIBTETRISAUTH_SRCS   := $(wildcard src/libtetrisauth/*.c)
 LIBTETRISSH_SRCS     := $(wildcard src/libtetrissh/*.c)
 LIBHTTTP_SRCS        := $(wildcard src/libhtttp/*.c)
 LIBBALLOTBRAIN_SRCS  := $(wildcard src/libballotbrain/*.c)
 LIBBALLOTCLIENT_SRCS := $(wildcard src/libballotclient/*.c)
-LIBTETRISDB_SRCS     := $(wildcard src/libtetrisdb/*.c)
+LIBTETRISDB_SRCS     := $(wildcard src/libtetrisdb/*.c) \
+                        $(wildcard src/libtetrisdb/pipe/*.c) \
+                        $(wildcard src/libtetrisdb/socket/*.c)
 LIBCOMMON_SRCS       := $(wildcard src/libcommon/*.c)
 LIBTETRISUI_SRCS     := $(wildcard src/libtetrisui/*.c)
 
+LIBTETRISAUTH_OBJS   := $(LIBTETRISAUTH_SRCS:.c=.o)
 LIBTETRISSH_OBJS     := $(LIBTETRISSH_SRCS:.c=.o)
 LIBHTTTP_OBJS        := $(LIBHTTTP_SRCS:.c=.o)
 LIBBALLOTBRAIN_OBJS  := $(LIBBALLOTBRAIN_SRCS:.c=.o)
@@ -64,6 +68,9 @@ LIBTETRISUI_OBJS     := $(LIBTETRISUI_SRCS:.c=.o)
 # Pattern rule: compile .c -> .o
 %.o: %.c $(HEADERS)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(LIB_DIR)/libtetrisauth.a: $(LIBTETRISAUTH_OBJS)
+	ar rcs $@ $^
 
 $(LIB_DIR)/libtetrissh.a: $(LIBTETRISSH_OBJS)
 	ar rcs $@ $^
@@ -100,6 +107,9 @@ $(BIN_DIR)/ballotd: $(wildcard src/ballotd/*.c) $(LIBS) $(HEADERS)
 $(BIN_DIR)/tetrislogd: $(wildcard src/tetrislogd/*.c) $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
+$(BIN_DIR)/tetrisdb: $(wildcard src/tetrisdb/*.c) $(LIBS) $(HEADERS)
+	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
+
 # ballotctl and ballotu are the only binaries that draw, so -ltetrisui and
 # -lncurses are scoped to them rather than added to the global LDLIBS.
 $(BIN_DIR)/ballotctl $(BIN_DIR)/ballotu: LDLIBS += -ltetrisui -lncurses
@@ -129,8 +139,20 @@ $(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNIT
 # rather than tests/unit/, so it needs an explicit rule to beat the pattern
 # rule above. It spawns a real PipeRunner child and skips those cases when
 # java or the jar is missing, so it stays runnable on a machine without a JVM.
-$(BIN_DIR)/test_db: tests/test_db.c $(LIB_DIR)/libtetrisdb.a $(HEADERS)
-	$(CC) $(CFLAGS) tests/test_db.c -o $@ $(LDFLAGS) -ltetrisdb -lpthread
+$(BIN_DIR)/test_db: tests/test_db.c $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libcommon.a $(HEADERS)
+	$(CC) $(CFLAGS) tests/test_db.c -o $@ $(LDFLAGS) -ltetrisdb -lcommon -lpthread
+
+$(BIN_DIR)/test_auth: tests/test_auth.c $(LIBS) $(HEADERS)
+	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
+
+$(BIN_DIR)/test_jwt: tests/test_jwt.c src/libtetrisauth/jwt.c $(HEADERS)
+	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) -lcrypto
+
+$(BIN_DIR)/test_rc: tests/test_rc.c src/tetrislogd/config.c $(BIN_DIR)/tetrislogd $(LIB_DIR)/libtetrisauth.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libcommon.a $(HEADERS)
+	$(CC) $(CFLAGS) tests/test_rc.c src/tetrislogd/config.c -o $@ $(LDFLAGS) -ltetrisauth -ltetrisdb -lcommon
+
+$(BIN_DIR)/test_tetrisdb: tests/test_tetrisdb.c $(BIN_DIR)/tetrisdb $(HEADERS)
+	$(CC) $(CFLAGS) tests/test_tetrisdb.c -o $@ -lpthread
 
 # Same story as test_db, plus it spawns the real bin/tetrislogd over a socket,
 # so the daemon is a build prerequisite rather than just a runtime assumption.
@@ -138,14 +160,28 @@ $(BIN_DIR)/test_logd: tests/test_logd.c $(LIB_DIR)/libcommon.a $(BIN_DIR)/tetris
 	$(CC) $(CFLAGS) tests/test_logd.c -o $@ $(LDFLAGS) -lcommon
 
 .PHONY: test
-test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd
+test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd $(BIN_DIR)/test_auth $(BIN_DIR)/test_jwt $(BIN_DIR)/test_rc $(BIN_DIR)/test_tetrisdb
 	@fail=0; \
-	for t in $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd; do \
+	for t in $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd $(BIN_DIR)/test_rc $(BIN_DIR)/test_tetrisdb $(BIN_DIR)/test_jwt $(BIN_DIR)/test_auth; do \
 	  echo "== $$t =="; \
 	  $$t || fail=1; \
 	done; \
 	if [ $$fail -ne 0 ]; then echo "SOME UNIT TESTS FAILED"; exit 1; fi; \
 	echo "ALL UNIT TESTS PASSED"
+
+.PHONY: test-ci
+test-ci: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd $(BIN_DIR)/test_auth $(BIN_DIR)/test_jwt $(BIN_DIR)/test_rc
+	@fail=0; \
+	for t in $(TEST_BINS) $(BIN_DIR)/test_logd $(BIN_DIR)/test_rc $(BIN_DIR)/test_jwt; do \
+	  echo "== $$t =="; \
+	  $$t || fail=1; \
+	done; \
+	for t in $(BIN_DIR)/test_db $(BIN_DIR)/test_auth; do \
+	  echo "== $$t =="; \
+	  TETRISH_NO_RUNNER=1 $$t || fail=1; \
+	done; \
+	if [ $$fail -ne 0 ]; then echo "SOME UNIT TESTS FAILED"; exit 1; fi; \
+	echo "ALL CI TESTS PASSED"
 
 # Build from scratch and drop straight into the shell. `all` alone can leave a
 # stale binary behind when a source is removed rather than changed, and the
@@ -161,4 +197,4 @@ start:
 	./tetrish
 
 clean:
-	rm -rf $(BIN_DIR)/* $(LIB_DIR)/*.a src/*/*.o
+	rm -rf $(BIN_DIR)/* $(LIB_DIR)/*.a src/*/*.o src/*/*/*.o

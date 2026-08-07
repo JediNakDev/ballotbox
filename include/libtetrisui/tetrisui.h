@@ -42,6 +42,26 @@ int tetrisui_input(const char *title, const char *prompt, char *out, int out_len
 int tetrisui_form(const char *title, const char *labels[],
              char values[][TETRISUI_FIELD_LEN], int count);
 
+/*
+ * Extended form: adds what a re-opened, refused form needs and tetrisui_form()
+ * does not carry (#50).
+ *
+ *   mask        bit i set -> field i is drawn as '*' and typed as '*', for a
+ *               password field sitting next to an unmasked one. A field, not
+ *               a form, property - the alternative is a second parallel bool
+ *               array the caller has to keep in step with labels/values.
+ *   error       one line under the fields, or NULL for none. A re-opened form
+ *               is the only thing on screen, so it is where the refusal
+ *               reason belongs.
+ *   start_field which field has focus when the form opens - the field the
+ *               refusal says is wrong, not always field 0.
+ *
+ * tetrisui_form() is this with mask 0, error NULL, start_field 0.
+ */
+int tetrisui_form_ex(const char *title, const char *labels[],
+             char values[][TETRISUI_FIELD_LEN], int count,
+             unsigned mask, const char *error, int start_field);
+
 /* yes/no confirmation; returns 1 for yes, 0 for no (ESC and 'q' mean no) */
 int tetrisui_confirm(const char *title, const char *question);
 

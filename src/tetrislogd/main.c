@@ -11,10 +11,9 @@
  * (or started by tetrisd) rather than double-forking away from its parent.
  * Terminate it with SIGINT/SIGTERM; rotate its file with mv + SIGHUP.
  *
- * Every path has a built-in default, so tetrislogd runs with no
- * configuration at all. Precedence, low to high: built-in default, then
- * .tetrishrc (log_ipc / log_path / log_level directives, read from RC_PATH -
- * see libcommon/rc.h), then the matching command-line flag - each layer
+ * Every value has a built-in default, but .tetrishrc must exist and every
+ * log_ directive in it must be valid. Precedence, low to high: built-in
+ * default, then .tetrishrc, then the matching command-line flag. Each layer
  * only overrides what the one below it set.
  *
  * Usage: tetrislogd [-s socket] [-f logfile] [-l level] [-e] [-h]
@@ -25,18 +24,10 @@
 #include "libcommon/rc.h"
 
 #include <signal.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-
-#define DEFAULT_SOCKET_PATH "var/run/tetrislogd.sock"
-#define DEFAULT_LOG_PATH "var/log/tetrisd.log"
-
-/* Where the mirrored log table lives. Named after this daemon, not "var/db",
-   because the directory identifies its owner: tetrislogd owns everything
-   under here, and a second daemon wanting a database picks its own
-   (var/db_vote, ...) rather than sharing this one. */
-#define DEFAULT_DB_DIR "var/db_log"
 
 static void on_terminate(int sig) {
   (void)sig;
@@ -68,10 +59,8 @@ static int install(int sig, void (*handler)(int)) {
 }
 
 static void usage(FILE *out, const char *argv0) {
-  /* Ask libtetrisdb for its own default rather than restating it here, so
-     the help text cannot drift from what the daemon actually does. */
-  tdb_opts_t db;
-  tdb_opts_default(&db);
+  logd_opts_t defaults;
+  logd_opts_default(&defaults);
 
   fprintf(out,
           "usage: %s [-s socket] [-f logfile] [-l level] [-e]"
@@ -87,24 +76,15 @@ static void usage(FILE *out, const char *argv0) {
           "              dbdir defaults to %s)\n"
           "  -D jar      simpledb.jar to run (default %s); implies -d\n"
           "  -h          show this help\n",
-          argv0, DEFAULT_SOCKET_PATH, DEFAULT_LOG_PATH, DEFAULT_DB_DIR,
-          db.jar);
+          argv0, defaults.socket_path, defaults.log_path, defaults.db.dir,
+          defaults.db.jar);
 }
 
 int main(int argc, char **argv) {
   logd_opts_t opts;
-  snprintf(opts.socket_path, sizeof(opts.socket_path), "%s",
-           DEFAULT_SOCKET_PATH);
-  snprintf(opts.log_path, sizeof(opts.log_path), "%s", DEFAULT_LOG_PATH);
-  opts.min_level = LOG_DEBUG; /* lowest rank: keep everything */
-  opts.echo = 0;
-  /* Mirroring is opt-in: it needs a JVM and the SimpleDB jar, neither of
-     which the file sink depends on. */
-  opts.db_enable = 0;
-  tdb_opts_default(&opts.db);
-  snprintf(opts.db.dir, sizeof(opts.db.dir), "%s", DEFAULT_DB_DIR);
-
-  logd_load_rc(RC_PATH, &opts);
+  logd_opts_default(&opts);
+  if (logd_load_rc(RC_PATH, &opts) < 0)
+    return 1;
 
   int opt;
   while ((opt = getopt(argc, argv, "s:f:l:ed:D:h")) != -1) {

@@ -1,8 +1,9 @@
 #ifndef TETRISLOGD_H
 #define TETRISLOGD_H
 
-/*
- * tetrislogd.h - internal interface of the tetriSH logging daemon.
+/**
+ * @file tetrislogd.h
+ * @brief Internal interface of the tetriSH logging daemon.
  *
  * tetrislogd owns one AF_UNIX datagram socket and one log file. Everything it
  * does is a consequence of one loop: read a datagram, validate it, append a
@@ -16,7 +17,7 @@
 #include <limits.h>
 
 #include "libcommon/logmsg.h"
-#include "libtetrisdb/tetrisdb.h"
+#include "libtetrisdb/pipe/db.h"
 
 /* What the daemon was asked to do. Owned by main, borrowed by the sink.
  * Fixed buffers (not const char *) so config.c can overwrite a field in
@@ -30,18 +31,23 @@ typedef struct {
     /* Mirroring into SimpleDB. Off by default: the file sink is the source
      * of truth and must keep working on a machine with no JVM, so the
      * database is something an operator opts into. When on, tetrislogd is
-     * the sole owner of the "log" table (libtetrisdb/tetrisdb.h, invariant
+     * the sole owner of the "log" table (libtetrisdb/pipe/db.h, invariant
      * 2) - no other process may read or write it while the daemon runs. */
     int         db_enable;
     tdb_opts_t  db;
 } logd_opts_t;
 
+/* Complete log_ namespace, NULL-terminated. */
+extern const char *const logd_rc_keys[];
+
+/* Seed every rc-controlled field with its settled default. */
+void logd_opts_default(logd_opts_t *opts);
+
 /*
  * Overlay directives from the rc file at rc_path onto *opts, replacing only
  * the fields the file mentions. A field the file does not mention is left as
- * the caller set it - so calling this after seeding *opts with the built-in
- * defaults gives exactly "default, unless the rc file says otherwise". A
- * missing file is not an error: *opts is left untouched.
+ * the caller set it - so calling this after logd_opts_default() gives exactly
+ * "default, unless the rc file says otherwise".
  *
  * Recognised directives: log_ipc (socket path), log_path (log file path),
  * log_level (minimum severity: debug|info|warn|error), log_db (on|off),
@@ -50,9 +56,14 @@ typedef struct {
  * statements before records are dropped). Every other line -
  * including PATH= and bare commands, which the same file may carry for the
  * shell - is silently ignored: this rc file is shared with tetrish's
- * .tetrishrc, and tetrislogd only picks out the keys it understands.
+ * .tetrishrc, and tetrislogd only owns the log_ namespace.
+ *
+ * Returns rc_load()'s directive count, or -1 when the file is missing, a
+ * log_ value is invalid, or an unknown log_ key is present. The update is
+ * transactional: *opts is unchanged on failure.
  */
-void logd_load_rc(const char *rc_path, logd_opts_t *opts);
+int logd_load_rc(const char *rc_path, logd_opts_t *opts)
+    __attribute__((warn_unused_result));
 
 /* Counters reported at shutdown, so an operator can tell a quiet log from a
  * lossy one. */

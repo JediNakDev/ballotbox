@@ -14,6 +14,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,7 +48,8 @@ static void apply_rc(const char *key, const char *value, void *ctx)
 
 void log_load_rc(const char *rc_path)
 {
-    rc_load(rc_path, apply_rc, NULL);
+    if (rc_load(rc_path, apply_rc, NULL) < 0)
+        return; /* sender has no startup to refuse; keep the current value */
 }
 
 const char *log_level_str(log_level_t level)

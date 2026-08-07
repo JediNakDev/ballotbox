@@ -1,8 +1,9 @@
 #ifndef LIBCOMMON_LOGMSG_H
 #define LIBCOMMON_LOGMSG_H
 
-/*
- * logmsg.h - the tetriSH logging IPC contract.
+/**
+ * @file logmsg.h
+ * @brief The tetriSH logging IPC contract.
  *
  * Every tetriSH process (tetrisd, its per-session workers, tetrisctl, the
  * shell's system programs) reports what it is doing to one place: tetrislogd.

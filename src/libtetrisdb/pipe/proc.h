@@ -1,36 +1,30 @@
-#ifndef LIBTETRISDB_INTERNAL_H
-#define LIBTETRISDB_INTERNAL_H
+#ifndef LIBTETRISDB_PIPE_PROC_H
+#define LIBTETRISDB_PIPE_PROC_H
 
-/*
- * internal.h - the pieces of libtetrisdb that are not part of its interface.
+/**
+ * @file proc.h
+ * @brief The PipeRunner child, private to the fire-and-forget path.
  *
- * Split out so the child-process protocol (proc.c) can be reasoned about and
- * tested without the queue and worker thread (db.c) around it. Nothing here
- * is visible to callers.
+ * Included by pipe/proc.c and pipe/queue.c and nothing else. Split out so the
+ * child-process handling can be reasoned about without the queue and worker
+ * thread around it.
+ *
+ * Nothing on the query path includes this file: socket/socket.c takes wire.h
+ * alone, so "the login path does not depend on the logging path" is a fact the
+ * compiler holds rather than a rule someone has to keep.
  */
 
-#include "libtetrisdb/tetrisdb.h"
+#include "libtetrisdb/pipe/db.h"
+#include "../wire.h"
 
 #include <stdio.h>
 #include <sys/types.h>
 
-/* Longest response body kept from a statement. Only ever shown when a
- * statement fails, and PipeRunner's failures are a line or two, so a short
- * cap costs nothing and bounds a runaway child's output. */
-#define TDB_BODY_MAX 1024
-
-/* One PipeRunner child and the two pipes to it. */
+/** One PipeRunner child and the two pipes to it. */
 typedef struct {
-    pid_t pid;      /* child, or -1 when not running */
-    int   in_fd;    /* we write statements here -> child stdin */
-    int   out_fd;   /* we read responses here <- child stdout */
-
-    /* Line-buffered reader over out_fd. The protocol is line-oriented and
-     * the response terminator can only be recognised on a line boundary, so
-     * reads must be buffered here rather than by each caller. */
-    char   buf[4096];
-    size_t len;     /* bytes held in buf */
-    size_t pos;     /* next unread byte in buf */
+    pid_t      pid;   /**< Child, or -1 when not running. */
+    int        in_fd; /**< Statements are written here, to the child's stdin. */
+    tdb_wire_t out;   /**< Responses are read here, from the child's stdout. */
 } tdb_proc_t;
 
 /*
@@ -64,4 +58,4 @@ void tdb_proc_close(tdb_proc_t *p);
  * already unusable (failed handshake), never for normal shutdown. */
 void tdb_proc_kill(tdb_proc_t *p);
 
-#endif /* LIBTETRISDB_INTERNAL_H */
+#endif /* LIBTETRISDB_PIPE_PROC_H */

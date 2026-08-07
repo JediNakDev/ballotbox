@@ -1,5 +1,6 @@
-/*
- * schema.c - creating a table, and getting text safely into one.
+/**
+ * @file schema.c
+ * @brief Creating a table, and getting text safely into one.
  *
  * SimpleDB's parser has no DDL at all, so "CREATE TABLE IF NOT EXISTS" is
  * spelled here as two filesystem facts: a line in catalog.txt describing the
@@ -7,29 +8,18 @@
  * PipeRunner starts, because it reads the catalog once and never rereads it.
  */
 
-#include "libtetrisdb/tetrisdb.h"
+#include "libtetrisdb/schema.h"
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define TDB_DEFAULT_JAR "db/dist/simpledb.jar"
-#define TDB_DEFAULT_JAVA "java"
-#define TDB_DEFAULT_QCAP 256
-
-void tdb_opts_default(tdb_opts_t *opts) {
-  /* dir has no default on purpose. Two daemons accepting the same built-in
-     directory would land in one catalog and, sooner or later, one .dat -
-     exactly the corruption this library exists to prevent. Naming the
-     directory is therefore the caller's decision, and an unset one is an
-     error rather than a guess. */
-  opts->dir[0] = '\0';
-  snprintf(opts->jar, sizeof(opts->jar), "%s", TDB_DEFAULT_JAR);
-  snprintf(opts->java, sizeof(opts->java), "%s", TDB_DEFAULT_JAVA);
-  opts->queue_cap = TDB_DEFAULT_QCAP;
+void tdb_catalog_path(char *dst, size_t cap, const char *dir) {
+  snprintf(dst, cap, "%s/catalog.txt", dir != NULL ? dir : "");
 }
 
 /*
@@ -70,7 +60,7 @@ static int catalog_has(const char *catalog, const char *name) {
 
 /* Create every missing component of a directory path, like mkdir -p. Returns
  * 0 if the directory exists on return. */
-static int mkdir_p(const char *path) {
+int tdb_mkdir_p(const char *path) {
   char buf[PATH_MAX];
   struct stat st;
 
@@ -146,10 +136,10 @@ int tdb_ensure_table(const char *dir, const char *name, const char *schema) {
     return -1;
   }
 
-  if (mkdir_p(dir) < 0)
+  if (tdb_mkdir_p(dir) < 0)
     return -1;
 
-  snprintf(catalog, sizeof(catalog), "%s/catalog.txt", dir);
+  tdb_catalog_path(catalog, sizeof(catalog), dir);
   snprintf(dat, sizeof(dat), "%s/%s.dat", dir, name);
 
   /* The heap file first: a catalog line naming a .dat that does not exist

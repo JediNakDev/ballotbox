@@ -362,13 +362,22 @@ int session_recv(session_t *s, uint8_t *buf, uint32_t *len)
     if (!plain)
         return SESSION_ERR_CRYPTO;
 
+    /* Scrub before free on BOTH exits: this heap block is the only copy of the
+     * plaintext libtetrissh makes, and for LOGIN/REGISTER that plaintext is a
+     * password (#59). Unconditional rather than a session_recv_secret()
+     * variant: measured at 66 ns for a 1422-byte UPD_GAME frame against a
+     * ~2000 ns decrypt, so the cost of the frames that carry nothing secret is
+     * far below the cost of a caller forgetting which function to call.
+     * plain_len, not the malloc'd ct_len: the padding tail is never written. */
     if (plain_len > *len)
     {
+        OPENSSL_cleanse(plain, plain_len);
         free(plain);
         return SESSION_ERR_NOSPACE; /* frame consumed; stream still in sync */
     }
     memcpy(buf, plain, plain_len);
     *len = (uint32_t)plain_len;
+    OPENSSL_cleanse(plain, plain_len);
     free(plain);
     return SESSION_OK;
 }

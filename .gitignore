@@ -12,5 +12,6 @@ external/tetriSH
 log
 .cache
 compile_commands.json
+auth/jwt_secret
 # SimpleDB test artifacts, written into the repo root by `ant test`
 simple*.db

@@ -1,75 +1,112 @@
-/*
- * config.c - rc-file overlay for tetrislogd's paths and level.
- *
- * Directive parsing itself lives in libcommon/rc.c, shared with every other
- * tetriSH component that reads .tetrishrc; this file only knows what
- * "log_ipc", "log_path" and "log_level" mean.
+/**
+ * @file config.c
+ * @brief The complete log_ namespace owned by tetrislogd.
  */
 
 #include "tetrislogd/tetrislogd.h"
 
 #include "libcommon/rc.h"
 
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
-/* Read an on/off directive, keeping fallback if the word is not one we
- * recognise. Spelled generously (on/off, yes/no, true/false, 1/0) because
- * this file is edited by hand. */
-static int parse_bool(const char *value, int fallback) {
-  static const char *yes[] = {"on", "yes", "true", "1"};
-  static const char *no[] = {"off", "no", "false", "0"};
+#define DEFAULT_SOCKET_PATH "var/run/tetrislogd.sock"
+#define DEFAULT_LOG_PATH "var/log/tetrisd.log"
+#define DEFAULT_DB_DIR "var/db_log"
 
-  for (size_t i = 0; i < sizeof(yes) / sizeof(yes[0]); i++) {
-    if (strcasecmp(value, yes[i]) == 0)
-      return 1;
-    if (strcasecmp(value, no[i]) == 0)
-      return 0;
-  }
-  fprintf(stderr, "tetrislogd: rc: invalid boolean '%s', keeping %s\n", value,
-          fallback ? "on" : "off");
-  return fallback;
+const char *const logd_rc_keys[] = {
+    "log_path", "log_ipc", "log_level", "log_send_attempts", "log_db",
+    "log_db_dir", "log_db_jar", "log_db_java", "log_db_queue", NULL,
+};
+
+/* log_level's spelling is tetrislogd's own, so it comes through RC_CUSTOM
+ * rather than being a type libcommon has to know about. */
+static int parse_level(const char *value, void *field) {
+  return log_level_parse(value, (log_level_t *)field);
 }
 
-/* Apply one recognised directive to opts (passed as ctx). Unknown keys are
- * ignored without comment: this file is shared with tetrish's .tetrishrc,
- * which carries directives (PATH=, commands) that mean nothing to us. */
-static void apply(const char *key, const char *value, void *ctx) {
-  logd_opts_t *opts = ctx;
+/*
+ * The complete log_ namespace, as a table.
+ *
+ * log_send_attempts is check_only: tetrislogd owns the namespace and refuses a
+ * bad value, but the key is consumed by libcommon's sender, not by the daemon.
+ */
+static const rc_key_t LOG_KEYS[] = {
+    {.key = "log_path",
+     .type = RC_STR,
+     .off = offsetof(logd_opts_t, log_path),
+     .cap = sizeof(((logd_opts_t *)0)->log_path)},
+    {.key = "log_ipc",
+     .type = RC_STR,
+     .off = offsetof(logd_opts_t, socket_path),
+     .cap = sizeof(((logd_opts_t *)0)->socket_path),
+     .max_len = sizeof(((struct sockaddr_un *)0)->sun_path) - 1},
+    {.key = "log_level",
+     .type = RC_CUSTOM,
+     .off = offsetof(logd_opts_t, min_level),
+     .parse = parse_level},
+    {.key = "log_send_attempts",
+     .type = RC_INT,
+     .lo = 1,
+     .hi = 1000,
+     .check_only = true},
+    {.key = "log_db", .type = RC_BOOL, .off = offsetof(logd_opts_t, db_enable)},
+    {.key = "log_db_dir",
+     .type = RC_STR,
+     .off = offsetof(logd_opts_t, db) + offsetof(tdb_opts_t, dir),
+     .cap = sizeof(((tdb_opts_t *)0)->dir)},
+    {.key = "log_db_jar",
+     .type = RC_STR,
+     .off = offsetof(logd_opts_t, db) + offsetof(tdb_opts_t, jar),
+     .cap = sizeof(((tdb_opts_t *)0)->jar)},
+    {.key = "log_db_java",
+     .type = RC_STR,
+     .off = offsetof(logd_opts_t, db) + offsetof(tdb_opts_t, java),
+     .cap = sizeof(((tdb_opts_t *)0)->java)},
+    {.key = "log_db_queue",
+     .type = RC_SIZE,
+     .off = offsetof(logd_opts_t, db) + offsetof(tdb_opts_t, queue_cap),
+     .lo = 1,
+     .hi = INT_MAX},
+};
 
-  if (strcmp(key, "log_ipc") == 0) {
-    snprintf(opts->socket_path, sizeof(opts->socket_path), "%s", value);
-  } else if (strcmp(key, "log_path") == 0) {
-    snprintf(opts->log_path, sizeof(opts->log_path), "%s", value);
-  } else if (strcmp(key, "log_level") == 0) {
-    log_level_t lvl;
-    if (log_level_parse(value, &lvl) == 0)
-      opts->min_level = lvl;
-    else
-      fprintf(stderr,
-              "tetrislogd: rc: invalid log_level '%s', keeping default\n",
-              value);
-  } else if (strcmp(key, "log_db") == 0) {
-    opts->db_enable = parse_bool(value, opts->db_enable);
-  } else if (strcmp(key, "log_db_dir") == 0) {
-    snprintf(opts->db.dir, sizeof(opts->db.dir), "%s", value);
-  } else if (strcmp(key, "log_db_jar") == 0) {
-    snprintf(opts->db.jar, sizeof(opts->db.jar), "%s", value);
-  } else if (strcmp(key, "log_db_java") == 0) {
-    snprintf(opts->db.java, sizeof(opts->db.java), "%s", value);
-  } else if (strcmp(key, "log_db_queue") == 0) {
-    char *end;
-    long n = strtol(value, &end, 10);
-    if (*end == '\0' && n > 0)
-      opts->db.queue_cap = (size_t)n;
-    else
-      fprintf(stderr,
-              "tetrislogd: rc: invalid log_db_queue '%s', keeping %zu\n", value,
-              opts->db.queue_cap);
-  }
+void logd_opts_default(logd_opts_t *opts) {
+  snprintf(opts->socket_path, sizeof(opts->socket_path), "%s",
+           DEFAULT_SOCKET_PATH);
+  snprintf(opts->log_path, sizeof(opts->log_path), "%s", DEFAULT_LOG_PATH);
+  opts->min_level = LOG_DEBUG;
+  opts->echo = 0;
+  opts->db_enable = 0;
+  tdb_opts_default(&opts->db);
+  snprintf(opts->db.dir, sizeof(opts->db.dir), "%s", DEFAULT_DB_DIR);
 }
 
-void logd_load_rc(const char *rc_path, logd_opts_t *opts) {
-  rc_load(rc_path, apply, opts);
+int logd_load_rc(const char *rc_path, logd_opts_t *opts) {
+  if (rc_path == NULL || opts == NULL)
+    return -1;
+
+  logd_opts_t scratch = *opts;
+  rc_defect_t defect;
+
+  int applied = rc_bind(rc_path, LOG_KEYS, sizeof LOG_KEYS / sizeof LOG_KEYS[0],
+                        &scratch, "log_", &defect);
+  if (applied == RC_E_OPEN) {
+    fprintf(stderr, "tetrislogd: cannot read %s: %s\n", rc_path,
+            strerror(errno));
+    return -1;
+  }
+  if (applied < 0) {
+    fprintf(stderr, "tetrislogd: %s: invalid directive (%s = %s)\n", rc_path,
+            defect.key, defect.value);
+    return -1;
+  }
+
+  *opts = scratch;
+  return applied;
 }

@@ -6,6 +6,19 @@ log_ipc   = var/run/tetrislogd.sock
 log_level = debug
 log_send_attempts = 2
 
+# the shared SimpleDB runner (validated by tetrisdb start)
+db_dir      = var/db
+db_ipc      = var/run/tetrisdb.sock
+db_sessions = 16
+db_jar      = db/dist/simpledb.jar
+db_java     = java
+db_timeout  = 2000
+
+# authentication defaults used by libtetrisauth
+auth_max_attempts = 5
+auth_token_ttl    = 604800
+auth_pbkdf2_iters = 600000
+
 # SimpleDB mirroring (read by bin/tetrislogd)
 log_db       = on
 log_db_dir   = var/db_log

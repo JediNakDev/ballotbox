@@ -1,5 +1,6 @@
-/*
- * db.c - the bounded queue, the one worker thread, and the public handle.
+/**
+ * @file pipe/queue.c
+ * @brief The bounded queue, the one worker thread, and the public * handle.
  *
  * This file exists to enforce one rule: exactly one thread ever touches the
  * pipe. Producers hand over a string and move on; the worker is alone with
@@ -12,7 +13,7 @@
  * stalled daemon is not.
  */
 
-#include "internal.h"
+#include "proc.h"
 
 #include <pthread.h>
 #include <stdlib.h>

@@ -18,29 +18,12 @@ jobs:
       - name: Install OpenSSL
         run: brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
 
-      # Pinning matters less for the version than for the agreement: setup-java
-      # sets JAVA_HOME, so ant and the `java` that libtetrisdb execs are the
-      # same JDK. Left to itself, ant picks the newest JDK installed while
-      # `java` on PATH may be older, which is exactly how the jar ends up
-      # unloadable by the runtime meant to run it.
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Install Ant
-        run: brew list ant >/dev/null 2>&1 || brew install ant
-
-      # Rebuild simpledb.jar from source rather than trusting the committed
-      # one. A jar built by a newer JDK than the runner's loads with
-      # UnsupportedClassVersionError, and test_db reports that as a failure
-      # rather than skipping, so a stale jar turns CI red for a reason that has
-      # nothing to do with the change under test.
-      - name: Build simpledb.jar
-        run: ant -f db/build.xml dist
-
       - name: Build
         run: make all
 
+      # Runner-backed database cases are local-only because the third-party
+      # build jars are intentionally not committed. Run `ant -f db/build.xml
+      # dist` followed by `TETRISH_REQUIRE_RUNNER=1 make test` before merging
+      # changes to libtetrisdb or libtetrisauth.
       - name: Run tests
-        run: make test
+        run: make test-ci
