@@ -57,6 +57,7 @@ typedef enum {
   BB_ERR_CONFIG_TITLE,   /* empty title */
   BB_ERR_CONFIG_OPTIONS, /* fewer than 2 options */
   BB_ERR_CONFIG_TIME,    /* close time <= open time */
+  BB_ERR_CONFIG_ID_TAKEN, /* caller-supplied election id already exists */
 
   /* lifecycle */
   BB_ERR_ILLEGAL_TRANSITION, /* not a legal state edge */
@@ -82,7 +83,13 @@ typedef enum {
 
   /* infrastructure */
   BB_ERR_DB,             /* DB seam reported a failure */
-  BB_ERR_NOT_IMPLEMENTED /* deferred behind a stubbed seam (no readback yet) */
+  BB_ERR_NOT_IMPLEMENTED, /* deferred behind a stubbed seam (no readback yet) */
+  BB_ERR_RETRY /* internal: SimpleDB aborted a transaction to break a deadlock
+                * (<<END retry>>). Never returned across the daemon boundary -
+                * db.c's transaction wrapper retries the whole transaction
+                * itself and this code never escapes libballotbrain. Kept in
+                * the public enum (not a private one) only so bb_result_t
+                * stays the single vocabulary db_exec ever returns. */
 } bb_result_t;
 
 /* Configuration supplied by an admin to create an election (UC-1). */

@@ -9,6 +9,8 @@
  * Run from the repo root: make test
  */
 #include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <stdio.h>
@@ -20,13 +22,24 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "libballotbrain/db.h"
 #include "libballotclient/voter.h"
+#include "libtetrisdb/schema.h"
+#include "libtetrisdb/socket/runner.h"
 
 #define BALLOTD_BIN "bin/ballotd"
 #define TEST_PORT 17678
 #define CTL_PATH "var/run/test_client_transport.ctl"
 #define CA_PATH "auth/cacsertificate.crt"
 #define HOST "127.0.0.1"
+
+/* Same isolation reasoning as test_ballotd.c: never touch the shared var/db
+ * defaults, and give the DB-unreachable tests a socket nothing binds. */
+#define UNREACH_DB_DIR "var/db/test_client_transport_unreachable"
+#define UNREACH_DB_SOCK "var/run/test_client_transport_unreachable.sock"
+#define LIVE_DB_DIR "var/db/test_client_transport_live"
+#define LIVE_DB_SOCK "var/run/test_client_transport_live.sock"
+#define TEST_JAR "db/dist/simpledb.jar"
 
 static int tests_run = 0, tests_failed = 0;
 static pid_t g_ballotd = -1;
@@ -64,13 +77,14 @@ static int wait_for_tcp(int port) {
   return -1;
 }
 
-static pid_t start_ballotd(void) {
+static pid_t start_ballotd_ex(const char *db_dir, const char *db_sock) {
   pid_t pid = fork();
   if (pid < 0) return -1;
   if (pid == 0) {
     char port_buf[16];
     snprintf(port_buf, sizeof port_buf, "%d", TEST_PORT);
-    execl(BALLOTD_BIN, BALLOTD_BIN, "-p", port_buf, "-C", CTL_PATH, (char *)NULL);
+    execl(BALLOTD_BIN, BALLOTD_BIN, "-p", port_buf, "-C", CTL_PATH, "-d", db_dir, "-i", db_sock,
+          (char *)NULL);
     perror("execl " BALLOTD_BIN);
     _exit(127);
   }
@@ -82,6 +96,12 @@ static pid_t start_ballotd(void) {
   g_ballotd = pid;
   return pid;
 }
+
+/* Default fixture: DB deliberately unreachable. */
+static pid_t start_ballotd(void) { return start_ballotd_ex(UNREACH_DB_DIR, UNREACH_DB_SOCK); }
+
+/* Fixture for the runner-guarded block below. */
+static pid_t start_ballotd_live(void) { return start_ballotd_ex(LIVE_DB_DIR, LIVE_DB_SOCK); }
 
 static int stop_ballotd(pid_t pid) {
   int status = 0;
@@ -123,10 +143,11 @@ static int test_connect_fails_when_daemon_down(void) {
 }
 
 /* Proves the full real round trip (connect, encode, session_send,
- * session_recv, decode, classify) end to end. The outcome is TIMEOUT
- * because GET_ELECTION is still a stubbed read (BB_ERR_NOT_IMPLEMENTED),
- * which bu_classify_join's default case maps to BU_JOIN_TIMEOUT - that is
- * the correct, expected answer today, not a wiring failure. */
+ * session_recv, decode, classify) end to end. With the store unreachable,
+ * db_exec's connect failure (BB_ERR_DB) falls into bu_classify_join's
+ * default case, same as any other transport-level failure, so the outcome
+ * is TIMEOUT - see test_join_admitted_via_live_store below for the
+ * reachable-store path all the way to BU_JOIN_ADMITTED. */
 static int test_bu_join_round_trips_through_real_daemon(void) {
   pid_t pid = start_ballotd();
   CHECK(pid > 0, "daemon did not start");
@@ -139,7 +160,7 @@ static int test_bu_join_round_trips_through_real_daemon(void) {
   memset(&session, 0, sizeof(session));
   bu_join_outcome_t outcome = bu_join(ctx, &session, "E-100", "alice");
 
-  CHECK(outcome == BU_JOIN_TIMEOUT, "expected TIMEOUT (GET_ELECTION is still stubbed)");
+  CHECK(outcome == BU_JOIN_TIMEOUT, "expected TIMEOUT (store unreachable)");
   CHECK(session.joined == 0, "session must not be joined on this outcome");
 
   bcl_disconnect(ctx);
@@ -149,7 +170,8 @@ static int test_bu_join_round_trips_through_real_daemon(void) {
 }
 
 /* Same proof, but through bcl_send directly (RESULTS has no bu_* wrapper,
- * so ballotu.c calls bcl_send itself - this exercises that exact path). */
+ * so ballotu.c calls bcl_send itself - this exercises that exact path).
+ * Store unreachable: db_exec's connect failure comes back as BB_ERR_DB. */
 static int test_bcl_send_results_round_trips(void) {
   pid_t pid = start_ballotd();
   CHECK(pid > 0, "daemon did not start");
@@ -168,8 +190,8 @@ static int test_bcl_send_results_round_trips(void) {
   memset(&resp, 0, sizeof(resp));
   bb_result_t rc = bcl_send(ctx, &req, &resp);
 
-  CHECK(rc == BB_ERR_NOT_IMPLEMENTED, "GET_ELECTION is still a stubbed read");
-  CHECK(resp.status == BB_ERR_NOT_IMPLEMENTED, "resp.status should match rc on a real round trip");
+  CHECK(rc == BB_ERR_DB, "RESULTS with no reachable store must fail cleanly");
+  CHECK(resp.status == BB_ERR_DB, "resp.status should match rc on a real round trip");
 
   bcl_disconnect(ctx);
   bcl_destroy(ctx);
@@ -220,9 +242,10 @@ static int test_bcl_send_admin_op_without_ctl_path_configured(void) {
 }
 
 /* The real admin path: bcl_set_ctl_path, no bcl_connect at all - ballotctl
- * never touches the voter channel. */
+ * never touches the voter channel. Needs a live store: CREATE really writes
+ * now. */
 static int test_bcl_send_create_via_ctl_succeeds(void) {
-  pid_t pid = start_ballotd();
+  pid_t pid = start_ballotd_live();
   CHECK(pid > 0, "daemon did not start");
 
   bcl_ctx *ctx = bcl_create();
@@ -238,6 +261,52 @@ static int test_bcl_send_create_via_ctl_succeeds(void) {
   CHECK(resp.election.id[0] != '\0', "election id should be set");
 
   bcl_destroy(ctx);
+  CHECK(stop_ballotd(pid) == 0, "daemon exited non-zero");
+  return 0;
+}
+
+/* bu_join's ADMITTED path, all the way through the real client library: a
+ * real CREATE, a real OPEN (bu_join only admits an OPEN election), then a
+ * real JOIN as an eligible voter over the encrypted channel. */
+static int test_join_admitted_via_live_store(void) {
+  pid_t pid = start_ballotd_live();
+  CHECK(pid > 0, "daemon did not start");
+
+  bcl_ctx *actl = bcl_create();
+  CHECK(actl != NULL, "bcl_create failed");
+  bcl_set_ctl_path(actl, CTL_PATH);
+
+  bcl_request_t creq = make_create_request("Live Join");
+  snprintf(creq.config.eligible[0], BB_CERT_LEN, "alice");
+  creq.config.eligible_count = 1;
+  bcl_response_t cresp;
+  memset(&cresp, 0, sizeof cresp);
+  CHECK(bcl_send(actl, &creq, &cresp) == BB_OK, "CREATE should succeed");
+
+  bcl_request_t oreq;
+  memset(&oreq, 0, sizeof oreq);
+  oreq.op = BCL_OPEN;
+  snprintf(oreq.election_id, BB_ID_LEN, "%s", cresp.election.id);
+  snprintf(oreq.cert_name, BB_CERT_LEN, "admin");
+  bcl_response_t oresp;
+  memset(&oresp, 0, sizeof oresp);
+  CHECK(bcl_send(actl, &oreq, &oresp) == BB_OK, "OPEN should succeed");
+  bcl_destroy(actl);
+
+  bcl_ctx *voter = bcl_create();
+  CHECK(voter != NULL, "bcl_create failed");
+  CHECK(bcl_connect(voter, HOST, TEST_PORT, CA_PATH) == BB_OK, "bcl_connect failed");
+
+  bu_session_t session;
+  memset(&session, 0, sizeof session);
+  bu_join_outcome_t outcome = bu_join(voter, &session, cresp.election.id, "alice");
+
+  CHECK(outcome == BU_JOIN_ADMITTED, "eligible voter on an OPEN election should be admitted");
+  CHECK(session.joined == 1, "session should be marked joined");
+  CHECK(strcmp(session.election_id, cresp.election.id) == 0, "session should record the election id");
+
+  bcl_disconnect(voter);
+  bcl_destroy(voter);
   CHECK(stop_ballotd(pid) == 0, "daemon exited non-zero");
   return 0;
 }
@@ -289,6 +358,70 @@ static int test_send_after_disconnect_fails_cleanly(void) {
   return 0;
 }
 
+/* ---- fixture: a live SocketRunner ------------------------------------------ */
+
+static int runner_disabled(void) { return getenv("TETRISH_NO_RUNNER") != NULL; }
+static int have_jar(void) { return access(TEST_JAR, R_OK) == 0; }
+
+static int have_java(void) {
+  pid_t pid = fork();
+  if (pid < 0) return 0;
+  if (pid == 0) {
+    int null_fd = open("/dev/null", O_WRONLY);
+    if (null_fd >= 0) {
+      dup2(null_fd, STDOUT_FILENO);
+      dup2(null_fd, STDERR_FILENO);
+    }
+    execlp("java", "java", "-version", (char *)NULL);
+    _exit(127);
+  }
+  int status = 0;
+  while (waitpid(pid, &status, 0) < 0 && errno == EINTR);
+  return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static pid_t g_runner = -1;
+
+static void stop_runner(void) {
+  if (g_runner <= 0) return;
+  kill(g_runner, SIGTERM);
+  while (waitpid(g_runner, NULL, 0) < 0 && errno == EINTR);
+  g_runner = -1;
+  unlink(LIVE_DB_SOCK);
+}
+
+static int start_live_runner(void) {
+  if (tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_ELECTION, BB_DB_SCHEMA_ELECTION) != 0 ||
+      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_OPTION, BB_DB_SCHEMA_OPTION) != 0 ||
+      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_ELIGIBLE, BB_DB_SCHEMA_ELIGIBLE) != 0 ||
+      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_BALLOT, BB_DB_SCHEMA_BALLOT) != 0 ||
+      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_OWNER, BB_DB_SCHEMA_OWNER) != 0 ||
+      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_NONCE, BB_DB_SCHEMA_NONCE) != 0) {
+    fprintf(stderr, "test_client_transport: fixture: failed to provision tables\n");
+    return -1;
+  }
+
+  tdb_runner_opts_t opts;
+  tdb_runner_opts_default(&opts);
+  snprintf(opts.dir, sizeof opts.dir, "%s", LIVE_DB_DIR);
+  snprintf(opts.jar, sizeof opts.jar, "%s", TEST_JAR);
+  snprintf(opts.ipc, sizeof opts.ipc, "%s", LIVE_DB_SOCK);
+  opts.sessions = 8;
+  opts.recover = 0;
+
+  g_runner = tdb_runner_spawn(&opts, -1);
+  if (g_runner <= 0) {
+    fprintf(stderr, "test_client_transport: fixture: failed to spawn a runner\n");
+    return -1;
+  }
+  if (tdb_runner_wait(LIVE_DB_SOCK, g_runner, 20000) != 0) {
+    fprintf(stderr, "test_client_transport: fixture: runner never accepted a connection\n");
+    stop_runner();
+    return -1;
+  }
+  return 0;
+}
+
 /* ---- harness ------------------------------------------------------------- */
 
 static void run(const char *name, int (*fn)(void)) {
@@ -328,10 +461,28 @@ int main(void) {
   run("bcl_send(RESULTS) round-trips through the real daemon", test_bcl_send_results_round_trips);
   run("bcl_send admin op fails cleanly with no ctl_path set",
       test_bcl_send_admin_op_without_ctl_path_configured);
-  run("bcl_send(CREATE) via ctl succeeds", test_bcl_send_create_via_ctl_succeeds);
   run("bcl_send(CREATE) via ctl: invalid config refused",
       test_bcl_send_create_invalid_config_via_ctl);
   run("bcl_send after bcl_disconnect fails cleanly", test_send_after_disconnect_fails_cleanly);
+
+  if (!runner_disabled() && have_jar() && have_java()) {
+    if (start_live_runner() == 0) {
+      run("bcl_send(CREATE) via ctl succeeds (live store)", test_bcl_send_create_via_ctl_succeeds);
+      run("bu_join admits an eligible voter (live store)", test_join_admitted_via_live_store);
+      stop_runner();
+    } else {
+      tests_failed++;
+    }
+  } else {
+    printf("  (skipping live-store tests: %s)\n",
+           runner_disabled()   ? "TETRISH_NO_RUNNER is set"
+           : !have_jar()       ? "no " TEST_JAR " - run `ant dist` in db/"
+                                : "no java on PATH");
+    if (!runner_disabled() && getenv("TETRISH_REQUIRE_RUNNER") != NULL) {
+      fprintf(stderr, "    FAIL: TETRISH_REQUIRE_RUNNER is set and the runner tests could not run\n");
+      tests_failed++;
+    }
+  }
 
   unlink(CTL_PATH);
   printf("%d/%d passed\n", tests_run - tests_failed, tests_run);

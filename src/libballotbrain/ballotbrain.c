@@ -1,20 +1,18 @@
 #include "libballotbrain/ballotbrain.h"
+#include "internal.h"
 
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <string.h>
 
 /*
- * Per-instance context: the operation-log sink, the id allocator, and the write
- * lock that serialises ballot recording (R1). When SimpleDB lands it also owns
- * the store handle. Keeping state here rather than in file-scope globals is
- * what lets each test case run an isolated instance.
+ * Per-instance context: the operation-log sink, the write lock that
+ * serialises ballot recording (R1), and (struct bb_ctx itself, in
+ * internal.h, shared with db.c) the store connection state. Keeping state
+ * here rather than in file-scope globals is what lets each test case run an
+ * isolated instance.
  */
-struct bb_ctx {
-  FILE *log;
-  int next_election; /* placeholder id allocator until the DB assigns ids */
-  pthread_mutex_t write_lock;
-};
 
 bb_ctx *bb_create(void) {
   bb_ctx *ctx = calloc(1, sizeof(*ctx));
@@ -22,7 +20,6 @@ bb_ctx *bb_create(void) {
     return NULL;
   }
   ctx->log = stderr;
-  ctx->next_election = 100;
   if (pthread_mutex_init(&ctx->write_lock, NULL) != 0) {
     free(ctx);
     return NULL;
@@ -42,15 +39,67 @@ void bb_write_unlock(bb_ctx *ctx) {
   }
 }
 
-/* Internal: allocate the next placeholder election id ("E-100", "E-101", ...).
- * Real ids are assigned by SimpleDB once the store is wired in. */
+/*
+ * Durable id allocation: "select max(seq) from election" on its own
+ * connection, own transaction-free (auto-commit) statement. Deliberately
+ * NOT in db.c/txn.c: it never calls db_exec or bb_db_begin/commit/rollback,
+ * only tdb_socket_* directly, so it needs no fake and stays safe to call
+ * from every test - and when the store is unreachable (no fake, no real
+ * bin/tetrisdb, exactly the situation a plain unit test is in) it degrades
+ * to a fixed first id rather than failing, which is what keeps
+ * test_brain_create.c's assertions ("the id handed back is the id that was
+ * stored") true with no DB running at all.
+ */
 void bb_alloc_id(bb_ctx *ctx, char out[BB_ID_LEN]) {
-  snprintf(out, BB_ID_LEN, "E-%d", ctx->next_election++);
+  out[0] = '\0';
+  if (ctx == NULL) {
+    return;
+  }
+
+  tdb_socket_opts_t opts = bb_effective_db_opts(ctx);
+  tdb_socket_t *conn = tdb_socket_open(&opts);
+  int next = 100; /* first id if the table is empty or the store is unreachable */
+
+  if (conn != NULL) {
+    char body[4096];
+    if (tdb_socket_exec(conn, "select max(seq) from " BB_DB_TABLE_ELECTION ";", body,
+                        sizeof body) == TDB_OK) {
+      int rows = tdb_row_count(body);
+      if (rows > 0) {
+        const char *f[1];
+        size_t len[1];
+        if (tdb_row_fields(body, 0, f, len, 1) >= 1) {
+          char text[24];
+          size_t n = len[0] < sizeof(text) - 1 ? len[0] : sizeof(text) - 1;
+          memcpy(text, f[0], n);
+          text[n] = '\0';
+          char *end;
+          long v = strtol(text, &end, 10);
+          if (*end == '\0' && v >= 0) {
+            next = (int)v + 1;
+          }
+        }
+      }
+    }
+    tdb_socket_close(conn);
+  }
+
+  snprintf(out, BB_ID_LEN, "E-%d", next);
 }
 
 void bb_destroy(bb_ctx *ctx) {
   if (ctx == NULL) {
     return;
+  }
+  /* A transaction left open by a caller that forgot to commit/rollback must
+   * not leak the connection - closing it is also a rollback, per the wire
+   * contract. tdb_socket_close() directly, not db.c's bb_db_rollback(): a
+   * test that fakes db_exec (fake_brain_seams.h) must not be forced to link
+   * the real db.c just because bb_destroy is in its call path - same
+   * isolation reasoning as libballotclient's bcl_destroy not calling
+   * bcl_disconnect. */
+  if (ctx->txn_conn != NULL) {
+    tdb_socket_close(ctx->txn_conn);
   }
   pthread_mutex_destroy(&ctx->write_lock);
   free(ctx);

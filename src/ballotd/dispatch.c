@@ -17,8 +17,24 @@ bb_result_t ballotd_dispatch(bb_ctx *ctx, const bcl_request_t *req, bcl_response
     case BCL_CREATE: {
       char id[BB_ID_LEN];
       memset(id, 0, sizeof id);
-      resp->status = bb_create_election(ctx, &req->config, id);
+      resp->status = bb_create_election(ctx, &req->config, req->election_id, id);
       if (resp->status == BB_OK) snprintf(resp->election.id, BB_ID_LEN, "%s", id);
+      return resp->status;
+    }
+
+    /* Admin channel only (see control_plane.c's class check): a read-only
+     * peek at what CREATE would auto-allocate if the client submits with
+     * election_id left blank, so ballotctl can pre-fill and let the
+     * operator edit it before actually creating anything. bb_alloc_id has
+     * no side effect (a plain select max(seq)), so peeking costs nothing
+     * and reserves nothing - a later CREATE can still race another one
+     * server-side no differently than it always could. */
+    case BCL_ADMIN_NEXT_ID: {
+      char id[BB_ID_LEN];
+      memset(id, 0, sizeof id);
+      bb_alloc_id(ctx, id);
+      snprintf(resp->election.id, BB_ID_LEN, "%s", id);
+      resp->status = BB_OK;
       return resp->status;
     }
 
@@ -57,10 +73,33 @@ bb_result_t ballotd_dispatch(bb_ctx *ctx, const bcl_request_t *req, bcl_response
       return resp->status;
     }
 
-    case BCL_CHECK: {
+    /* Admin channel only (see control_plane.c's class check): same read,
+     * no eligible-list check - the operator need not be their own
+     * election's eligible voter. */
+    case BCL_ADMIN_RESULTS: {
+      bb_results_t results;
+      memset(&results, 0, sizeof results);
+      resp->status = bb_get_results_admin(ctx, req->election_id, &results);
+      if (resp->status == BB_OK) {
+        resp->option_count = results.option_count;
+        memcpy(resp->tally, results.tally, sizeof resp->tally);
+        memcpy(resp->options, results.options, sizeof resp->options);
+        resp->hash_count = results.hash_count;
+        memcpy(resp->hashes, results.hashes, sizeof resp->hashes);
+      }
+      return resp->status;
+    }
+
+    /* CHECK (voter channel) and ADMIN_CHECK (admin channel, since ballotctl
+     * has no voter session to route CHECK through at all) both resolve to
+     * the identical read - bb_lookup_hash is ungated on election state, so
+     * there is no PUBLISHED-vs-not distinction left between them, only
+     * which transport a caller reaches ballotd on. */
+    case BCL_CHECK:
+    case BCL_ADMIN_CHECK: {
       bb_ballot_hash_t row;
       memset(&row, 0, sizeof row);
-      resp->status = bb_lookup_hash(ctx, req->election_id, req->hash, &row);
+      resp->status = bb_lookup_hash(ctx, req->election_id, req->hash, &row, resp->found_option_name);
       resp->found = (resp->status == BB_OK) ? 1 : 0;
       if (resp->found) resp->found_option = row.option_index;
       return resp->status;

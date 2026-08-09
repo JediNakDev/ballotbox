@@ -89,12 +89,21 @@ static void handle_conn(int cfd) {
     return;
   }
 
-  /* Only the admin ops belong on this channel; JOIN/CAST/UPDATE/RESULTS/
-   * CHECK must come in over the voter TCP+tetrissh listener instead. This
-   * is the actual enforcement of "only ballotctl manages elections" - the
-   * channel a request arrived on decides what it is even allowed to ask. */
+  /* Only the admin ops belong on this channel; JOIN/CAST/UPDATE and the
+   * voter-gated RESULTS must come in over the voter TCP+tetrissh listener
+   * instead. ADMIN_RESULTS is this channel's own results read
+   * (bb_get_results_admin - no eligible-list check), a distinct op from
+   * RESULTS precisely so that gate can never be bypassed by sending the
+   * voter op here instead. ADMIN_CHECK is the same reasoning for CHECK on
+   * paper, but bb_lookup_hash (both ops call the same function - see
+   * dispatch.c) has no gate to bypass in the first place; it stays a
+   * separate op anyway because ballotctl has no voter session to route
+   * plain CHECK through at all, only ever the admin socket. This is the
+   * actual enforcement of "only ballotctl manages elections" - the channel
+   * a request arrived on decides what it is even allowed to ask. */
   if (cr.req.op != BCL_CREATE && cr.req.op != BCL_OPEN && cr.req.op != BCL_CLOSE &&
-      cr.req.op != BCL_PUBLISH) {
+      cr.req.op != BCL_PUBLISH && cr.req.op != BCL_ADMIN_RESULTS &&
+      cr.req.op != BCL_ADMIN_CHECK && cr.req.op != BCL_ADMIN_NEXT_ID) {
     ctl_reply_raw(cfd, 400);
     return;
   }

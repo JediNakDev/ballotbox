@@ -30,6 +30,7 @@ typedef struct {
   char election_id[BB_ID_LEN];
   bb_state_t new_state;
   char hash[BB_HASH_LEN];
+  int version; /* SET_OWNER */
   char nonce[BB_NONCE_LEN];
   char cert_name[BB_CERT_LEN];
   bb_ballot_hash_t row; /* APPEND_BALLOT payload */
@@ -121,7 +122,7 @@ static inline const fake_call_t *fake_last(bb_db_op_t op) {
 static inline int fake_write_count(void) {
   return fake_count(BB_DB_INSERT_ELECTION) + fake_count(BB_DB_UPDATE_STATE) +
          fake_count(BB_DB_APPEND_BALLOT) + fake_count(BB_DB_MARK_SUPERSEDED) +
-         fake_count(BB_DB_NONCE_MARK);
+         fake_count(BB_DB_NONCE_MARK) + fake_count(BB_DB_SET_OWNER);
 }
 
 /* ---- the seams --------------------------------------------------------- */
@@ -140,6 +141,7 @@ bb_result_t db_exec(bb_ctx *ctx, const bb_db_cmd_t *cmd, bb_db_result_t *out) {
     memcpy(rec->election_id, cmd->election_id, BB_ID_LEN);
     rec->new_state = cmd->new_state;
     memcpy(rec->hash, cmd->hash, BB_HASH_LEN);
+    rec->version = cmd->version;
     memcpy(rec->nonce, cmd->nonce, BB_NONCE_LEN);
     memcpy(rec->cert_name, cmd->cert_name, BB_CERT_LEN);
     if (cmd->hash_row != NULL) {
@@ -197,6 +199,31 @@ bb_result_t db_exec(bb_ctx *ctx, const bb_db_cmd_t *cmd, bb_db_result_t *out) {
       /* Write ops: recorded above, nothing to return. */
       return BB_OK;
   }
+}
+
+/*
+ * Transaction control, faked as trivial always-succeed no-ops. Real
+ * bb_record_ballot wraps its whole read-check-write sequence in
+ * bb_db_begin()/bb_db_commit(), which - for real - open and close a
+ * tdb_socket_t; a fake db_exec has nothing to reuse a connection across, so
+ * these just let the sequence run as if there were no transaction at all,
+ * exactly the old (pre-transaction) test behaviour. Faked here, not left to
+ * link the real txn.c, for the same isolation reason db_exec is faked above:
+ * txn.c's real functions need a reachable SocketRunner no plain unit test
+ * has.
+ */
+bb_result_t bb_db_begin(bb_ctx *ctx) {
+  (void)ctx;
+  return BB_OK;
+}
+
+bb_result_t bb_db_commit(bb_ctx *ctx) {
+  (void)ctx;
+  return BB_OK;
+}
+
+void bb_db_rollback(bb_ctx *ctx) {
+  (void)ctx;
 }
 
 bb_cert_status_t bb_verify_cert(bb_ctx *ctx, const char *cert_name) {

@@ -50,9 +50,16 @@ const char *bb_state_str(bb_state_t s);
  * BB_ERR_CONFIG_* code. No side effects. */
 bb_result_t bb_validate_config(const bb_config_t *config);
 
-/* Validate, then persist a new election in DRAFT. Fills out_id. Persistence
- * goes through the DB seam. */
-bb_result_t bb_create_election(bb_ctx *ctx, const bb_config_t *config, char out_id[BB_ID_LEN]);
+/*
+ * Validate, then persist a new election in DRAFT. Fills out_id. Persistence
+ * goes through the DB seam.
+ *
+ * desired_id: NULL or "" auto-allocates (bb_alloc_id), same as before this
+ * parameter existed. Given non-empty, that id is used instead - refused
+ * with BB_ERR_CONFIG_ID_TAKEN if an election with that id already exists.
+ */
+bb_result_t bb_create_election(bb_ctx *ctx, const bb_config_t *config, const char *desired_id,
+                               char out_id[BB_ID_LEN]);
 
 /* ---- lifecycle --------------------------------------------------------- */
 
@@ -109,11 +116,36 @@ bb_result_t bb_publish_results(bb_ctx *ctx, const char *election_id);
 bb_result_t bb_get_results(bb_ctx *ctx, const char *election_id, const char *cert_name,
                            bb_results_t *out);
 
+/*
+ * Admin-channel variant: same PUBLISHED gate, no eligible-voter check. The
+ * operator who ran an election is not necessarily on its own eligible list;
+ * reachability over the local admin socket is the authority instead, same
+ * as CREATE/OPEN/CLOSE/PUBLISH. Never reachable from the voter channel -
+ * see ballotd/control_plane.c's class check.
+ */
+bb_result_t bb_get_results_admin(bb_ctx *ctx, const char *election_id, bb_results_t *out);
+
 /* ---- UC-6: check your vote -------------------------------------------- */
 
-/* Look up a receipt hash in a published election's non-superseded set.
- * BB_OK fills `out` with the row; BB_ERR_NOT_FOUND is the dropped-ballot path. */
+/*
+ * Look up a receipt hash in the live (non-superseded) set. BB_OK fills
+ * `out` with the row; BB_ERR_NOT_FOUND is the dropped-ballot path;
+ * BB_ERR_NOT_FOUND also covers an unknown election id.
+ *
+ * Deliberately not gated on election state (works before close/publish
+ * too): the hash is a secret only its own holder has, and FIND_HASH's row
+ * carries no identity, so this reveals nothing about any other ballot
+ * regardless of when it runs - unlike bb_get_results, which stays
+ * PUBLISHED-only because it hands back an aggregate. Reachable from both
+ * BCL_CHECK (voter channel) and BCL_ADMIN_CHECK (admin channel, since
+ * ballotctl has no voter session to route CHECK through at all) - same
+ * function either way; only the transport differs.
+ *
+ * option_name (optional, may be NULL) is filled with out->option_index's
+ * display text - the option list is public (shown at JOIN), so returning it
+ * here reveals nothing beyond what `out` already does.
+ */
 bb_result_t bb_lookup_hash(bb_ctx *ctx, const char *election_id, const char *hash,
-                           bb_ballot_hash_t *out);
+                           bb_ballot_hash_t *out, char option_name[BB_OPTION_LEN]);
 
 #endif /* BALLOTBRAIN_H */

@@ -111,7 +111,8 @@ void bcl_set_ctl_path(bcl_ctx *ctx, const char *path) {
 }
 
 static int is_admin_op(bcl_op_t op) {
-  return op == BCL_CREATE || op == BCL_OPEN || op == BCL_CLOSE || op == BCL_PUBLISH;
+  return op == BCL_CREATE || op == BCL_OPEN || op == BCL_CLOSE || op == BCL_PUBLISH ||
+         op == BCL_ADMIN_RESULTS || op == BCL_ADMIN_CHECK || op == BCL_ADMIN_NEXT_ID;
 }
 
 /* Voter ops: the persistent tetrissh session opened by bcl_connect. */

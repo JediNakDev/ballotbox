@@ -56,6 +56,19 @@ void test_U35_join_timeout_creates_no_session(void) {
   TEST_ASSERT_EQUAL_INT(1, session.joined);
 }
 
+/* Regression: ballotu.c's real call site is bu_join(ctx, &session, id,
+ * session.cert_name) - the cert_name argument aliases the very struct
+ * bu_join's ADMITTED case memsets. A join that reads its own source string
+ * after clearing it must still end up with the right value, not "". */
+void test_join_survives_cert_name_aliasing_session(void) {
+  snprintf(session.cert_name, BB_CERT_LEN, "alice");
+  fake_client.response.status = BB_OK;
+  fake_client.response.election.state = BB_STATE_OPEN;
+
+  TEST_ASSERT_EQUAL_INT(BU_JOIN_ADMITTED, bu_join(ctx, &session, "E-100", session.cert_name));
+  TEST_ASSERT_EQUAL_STRING("alice", session.cert_name);
+}
+
 /* U-36: a non-open election is reported as not-open and is still remembered
  * locally (UC-2 alt flow 4a), but the voter is not joined to it. */
 void test_U36_not_open_election_recorded_locally(void) {
@@ -188,6 +201,7 @@ void test_encrypt_failure_sends_nothing(void) {
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_U35_join_timeout_creates_no_session);
+  RUN_TEST(test_join_survives_cert_name_aliasing_session);
   RUN_TEST(test_U36_not_open_election_recorded_locally);
   RUN_TEST(test_join_refusals_leave_no_session);
   RUN_TEST(test_admission_resets_the_session);

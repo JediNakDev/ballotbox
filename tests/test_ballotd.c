@@ -21,14 +21,30 @@
 #include <unistd.h>
 
 #include "ballotd/control_plane.h"
+#include "libballotbrain/db.h"
 #include "libballotclient/codec.h"
 #include "libhtttp/htttp.h"
+#include "libtetrisdb/schema.h"
+#include "libtetrisdb/socket/runner.h"
 #include "libtetrissh/tetrissh.h"
 
 #define BALLOTD_BIN "bin/ballotd"
 #define TEST_PORT 17677
 #define CTL_PATH "var/run/test_ballotd.ctl"
 #define CA_PATH "auth/cacsertificate.crt"
+
+/* Every daemon this file starts is pointed at a db_dir/db_sock of its own,
+ * never the shared var/db defaults - a run of this suite must not depend on,
+ * or leave state in, whatever a real bin/tetrisdb elsewhere has provisioned.
+ * UNREACH_* names a path nothing ever binds, for tests that want a
+ * deterministic "the store is unreachable" outcome without a live runner.
+ * LIVE_* is provisioned and pointed at a real SocketRunner only inside the
+ * have_jar()-guarded block below. */
+#define UNREACH_DB_DIR "var/db/test_ballotd_unreachable"
+#define UNREACH_DB_SOCK "var/run/test_ballotd_unreachable.sock"
+#define LIVE_DB_DIR "var/db/test_ballotd_live"
+#define LIVE_DB_SOCK "var/run/test_ballotd_live.sock"
+#define TEST_JAR "db/dist/simpledb.jar"
 
 static int tests_run = 0, tests_failed = 0;
 
@@ -79,7 +95,7 @@ static int wait_for_path(const char *path) {
   return -1;
 }
 
-static pid_t start_ballotd(void) {
+static pid_t start_ballotd_ex(const char *db_dir, const char *db_sock) {
   unlink(CTL_PATH);
 
   pid_t pid = fork();
@@ -87,7 +103,8 @@ static pid_t start_ballotd(void) {
   if (pid == 0) {
     char port_buf[16];
     snprintf(port_buf, sizeof port_buf, "%d", TEST_PORT);
-    execl(BALLOTD_BIN, BALLOTD_BIN, "-p", port_buf, "-C", CTL_PATH, (char *)NULL);
+    execl(BALLOTD_BIN, BALLOTD_BIN, "-p", port_buf, "-C", CTL_PATH, "-d", db_dir, "-i", db_sock,
+          (char *)NULL);
     perror("execl " BALLOTD_BIN);
     _exit(127);
   }
@@ -100,6 +117,14 @@ static pid_t start_ballotd(void) {
   g_ballotd = pid;
   return pid;
 }
+
+/* Default fixture: DB deliberately unreachable, for every test that does not
+ * itself need a live store (see UNREACH_DB_SOCK above). */
+static pid_t start_ballotd(void) { return start_ballotd_ex(UNREACH_DB_DIR, UNREACH_DB_SOCK); }
+
+/* Fixture for the runner-guarded block: the real db_dir/db_sock a live
+ * bin/tetrisdb (started by start_runner(), below) is bound to. */
+static pid_t start_ballotd_live(void) { return start_ballotd_ex(LIVE_DB_DIR, LIVE_DB_SOCK); }
 
 static int stop_ballotd(pid_t pid) {
   int status = 0;
@@ -244,10 +269,82 @@ static int test_ctl_rejects_voter_op(void) {
   return 0;
 }
 
-/* ---- tests: real dispatch through to libballotbrain -------------------------- */
+/* ---- tests: real dispatch through to libballotbrain, no DB needed ------------- */
+
+/* CREATE with the store unreachable: db_exec's own connect failure must come
+ * back as BB_ERR_DB, not a hang or a crash - the same "no socket" contract
+ * test_auth.c exercises for LOGIN. Replaces the old
+ * "GET_ELECTION is still a stubbed read" case now that db.c talks to a real
+ * SocketRunner; see the have_jar()-guarded block below for the case where
+ * a store IS reachable. */
+static int test_ctl_create_no_db_fails_cleanly(void) {
+  pid_t pid = start_ballotd();
+  CHECK(pid > 0, "daemon did not start");
+
+  int fd = ctl_connect();
+  CHECK(fd >= 0, "ctl connect failed");
+
+  bcl_request_t req;
+  memset(&req, 0, sizeof req);
+  req.op = BCL_CREATE;
+  snprintf(req.cert_name, BB_CERT_LEN, "admin");
+  req.config = valid_config("Officers 2026");
+
+  uint8_t wire[CTL_MAX_FRAME];
+  uint32_t wlen = sizeof wire;
+  CHECK(bcl_encode_request(&req, wire, &wlen) == 0, "encode CREATE");
+
+  uint8_t rbuf[CTL_MAX_FRAME];
+  htttp_response_t http;
+  CHECK(ctl_send_recv(fd, wire, wlen, rbuf, sizeof rbuf, &http) == 0, "ctl roundtrip");
+  close(fd);
+
+  bcl_response_t resp;
+  CHECK(bcl_decode_response(&http, &resp) == 0, "decode response");
+  CHECK(resp.status == BB_ERR_DB, "CREATE with no reachable store must fail cleanly");
+  CHECK(resp.election.id[0] == '\0', "no election id on a failed create");
+
+  CHECK(stop_ballotd(pid) == 0, "daemon exited non-zero");
+  return 0;
+}
+
+/* JOIN with the store unreachable: same contract, the voter channel. */
+static int test_voter_join_no_db_fails_cleanly(void) {
+  pid_t pid = start_ballotd();
+  CHECK(pid > 0, "daemon did not start");
+
+  session_t cli;
+  int fd = voter_connect(&cli);
+  CHECK(fd >= 0, "voter handshake failed");
+
+  bcl_request_t req;
+  memset(&req, 0, sizeof req);
+  req.op = BCL_JOIN;
+  snprintf(req.election_id, BB_ID_LEN, "E-100");
+  snprintf(req.cert_name, BB_CERT_LEN, "alice");
+
+  uint8_t wire[SESSION_MAX_FRAME];
+  uint32_t wlen = sizeof wire;
+  CHECK(bcl_encode_request(&req, wire, &wlen) == 0, "encode JOIN");
+
+  uint8_t rbuf[SESSION_MAX_FRAME];
+  htttp_response_t http;
+  CHECK(voter_send_recv(&cli, wire, wlen, rbuf, sizeof rbuf, &http) == 0, "roundtrip");
+
+  bcl_response_t resp;
+  CHECK(bcl_decode_response(&http, &resp) == 0, "decode response");
+  CHECK(resp.status == BB_ERR_DB, "JOIN with no reachable store must fail cleanly");
+
+  session_close(&cli);
+  close(fd);
+  CHECK(stop_ballotd(pid) == 0, "daemon exited non-zero");
+  return 0;
+}
+
+/* ---- tests: real dispatch through to libballotbrain, needs a live store ------- */
 
 static int test_ctl_create_ok(void) {
-  pid_t pid = start_ballotd();
+  pid_t pid = start_ballotd_live();
   CHECK(pid > 0, "daemon did not start");
 
   int fd = ctl_connect();
@@ -315,34 +412,83 @@ static int test_ctl_create_invalid_config(void) {
   return 0;
 }
 
-/* Documents today's correct, expected behaviour: GET_ELECTION is a stubbed
- * read (db.c returns BB_ERR_NOT_IMPLEMENTED), so JOIN on any election id
- * comes back this way until the frozen DB work lands - not a bug. */
-static int test_voter_join_not_implemented(void) {
-  pid_t pid = start_ballotd();
+/* A real CREATE followed by a real JOIN through the SAME running daemon:
+ * proves the election a CREATE persisted is the one a JOIN reads back, not
+ * just that each op individually reaches the store. */
+static int test_create_then_join_round_trips(void) {
+  pid_t pid = start_ballotd_live();
   CHECK(pid > 0, "daemon did not start");
+
+  int cfd = ctl_connect();
+  CHECK(cfd >= 0, "ctl connect failed");
+
+  bcl_request_t creq;
+  memset(&creq, 0, sizeof creq);
+  creq.op = BCL_CREATE;
+  snprintf(creq.cert_name, BB_CERT_LEN, "admin");
+  creq.config = valid_config("Round Trip");
+  snprintf(creq.config.eligible[0], BB_CERT_LEN, "alice");
+  creq.config.eligible_count = 1;
+
+  uint8_t cwire[CTL_MAX_FRAME];
+  uint32_t cwlen = sizeof cwire;
+  CHECK(bcl_encode_request(&creq, cwire, &cwlen) == 0, "encode CREATE");
+
+  uint8_t crbuf[CTL_MAX_FRAME];
+  htttp_response_t chttp;
+  CHECK(ctl_send_recv(cfd, cwire, cwlen, crbuf, sizeof crbuf, &chttp) == 0, "ctl roundtrip");
+  close(cfd);
+
+  bcl_response_t cresp;
+  CHECK(bcl_decode_response(&chttp, &cresp) == 0, "decode CREATE response");
+  CHECK(cresp.status == BB_OK, "CREATE should succeed");
+
+  /* JOIN only succeeds once OPEN (bb_join's own gate) - open it over the
+   * same admin channel before joining. */
+  int ofd = ctl_connect();
+  CHECK(ofd >= 0, "ctl connect failed");
+
+  bcl_request_t oreq;
+  memset(&oreq, 0, sizeof oreq);
+  oreq.op = BCL_OPEN;
+  snprintf(oreq.election_id, BB_ID_LEN, "%s", cresp.election.id);
+  snprintf(oreq.cert_name, BB_CERT_LEN, "admin");
+
+  uint8_t owire[CTL_MAX_FRAME];
+  uint32_t owlen = sizeof owire;
+  CHECK(bcl_encode_request(&oreq, owire, &owlen) == 0, "encode OPEN");
+
+  uint8_t orbuf[CTL_MAX_FRAME];
+  htttp_response_t ohttp;
+  CHECK(ctl_send_recv(ofd, owire, owlen, orbuf, sizeof orbuf, &ohttp) == 0, "ctl roundtrip");
+  close(ofd);
+
+  bcl_response_t oresp;
+  CHECK(bcl_decode_response(&ohttp, &oresp) == 0, "decode OPEN response");
+  CHECK(oresp.status == BB_OK, "OPEN should succeed");
 
   session_t cli;
   int fd = voter_connect(&cli);
   CHECK(fd >= 0, "voter handshake failed");
 
-  bcl_request_t req;
-  memset(&req, 0, sizeof req);
-  req.op = BCL_JOIN;
-  snprintf(req.election_id, BB_ID_LEN, "E-100");
-  snprintf(req.cert_name, BB_CERT_LEN, "alice");
+  bcl_request_t jreq;
+  memset(&jreq, 0, sizeof jreq);
+  jreq.op = BCL_JOIN;
+  snprintf(jreq.election_id, BB_ID_LEN, "%s", cresp.election.id);
+  snprintf(jreq.cert_name, BB_CERT_LEN, "alice");
 
-  uint8_t wire[SESSION_MAX_FRAME];
-  uint32_t wlen = sizeof wire;
-  CHECK(bcl_encode_request(&req, wire, &wlen) == 0, "encode JOIN");
+  uint8_t jwire[SESSION_MAX_FRAME];
+  uint32_t jwlen = sizeof jwire;
+  CHECK(bcl_encode_request(&jreq, jwire, &jwlen) == 0, "encode JOIN");
 
-  uint8_t rbuf[SESSION_MAX_FRAME];
-  htttp_response_t http;
-  CHECK(voter_send_recv(&cli, wire, wlen, rbuf, sizeof rbuf, &http) == 0, "roundtrip");
+  uint8_t jrbuf[SESSION_MAX_FRAME];
+  htttp_response_t jhttp;
+  CHECK(voter_send_recv(&cli, jwire, jwlen, jrbuf, sizeof jrbuf, &jhttp) == 0, "roundtrip");
 
-  bcl_response_t resp;
-  CHECK(bcl_decode_response(&http, &resp) == 0, "decode response");
-  CHECK(resp.status == BB_ERR_NOT_IMPLEMENTED, "GET_ELECTION is still a stubbed read");
+  bcl_response_t jresp;
+  CHECK(bcl_decode_response(&jhttp, &jresp) == 0, "decode JOIN response");
+  CHECK(jresp.status == BB_OK, "JOIN should find the election CREATE just persisted");
+  CHECK(strcmp(jresp.election.id, cresp.election.id) == 0, "JOIN must read back the same election");
 
   session_close(&cli);
   close(fd);
@@ -354,7 +500,7 @@ static int test_voter_join_not_implemented(void) {
  * ids proves both hit the SAME admin_thread / bb_ctx, not two independent
  * ones - the property the whole single-admin-thread design exists for. */
 static int test_two_creates_share_admin_thread(void) {
-  pid_t pid = start_ballotd();
+  pid_t pid = start_ballotd_live();
   CHECK(pid > 0, "daemon did not start");
 
   char ids[2][BB_ID_LEN];
@@ -465,6 +611,80 @@ static int test_sigterm_shutdown_with_worker_attached(void) {
   return 0;
 }
 
+/* ---- fixture: a live SocketRunner --------------------------------------------- */
+/*
+ * Same three-way split test_auth.c uses, and for the same reason: whether a
+ * runner CAN be started (jar built, java on PATH) is a different failure
+ * from whether the caller WANTS one (TETRISH_NO_RUNNER), and conflating them
+ * is how these tests silently stop running on a push and nobody notices.
+ */
+static int runner_disabled(void) { return getenv("TETRISH_NO_RUNNER") != NULL; }
+static int have_jar(void) { return access(TEST_JAR, R_OK) == 0; }
+
+static int have_java(void) {
+  pid_t pid = fork();
+  if (pid < 0) return 0;
+  if (pid == 0) {
+    int null_fd = open("/dev/null", O_WRONLY);
+    if (null_fd >= 0) {
+      dup2(null_fd, STDOUT_FILENO);
+      dup2(null_fd, STDERR_FILENO);
+    }
+    execlp("java", "java", "-version", (char *)NULL);
+    _exit(127);
+  }
+  int status = 0;
+  while (waitpid(pid, &status, 0) < 0 && errno == EINTR);
+  return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static pid_t g_runner = -1;
+
+static void stop_runner(void) {
+  if (g_runner <= 0) return;
+  kill(g_runner, SIGTERM);
+  while (waitpid(g_runner, NULL, 0) < 0 && errno == EINTR);
+  g_runner = -1;
+  unlink(LIVE_DB_SOCK);
+}
+
+/* recover = 0: SimpleDB's write-ahead log is a file named "log" in the
+ * current directory, shared by every runner ever started from the repo root
+ * (see tests/test_db.c), while LIVE_DB_DIR is provisioned fresh for this
+ * run - recovery would replay an earlier run's records onto a brand new
+ * heap file. */
+static int start_live_runner(void) {
+  if (tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_ELECTION, BB_DB_SCHEMA_ELECTION) != 0 ||
+      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_OPTION, BB_DB_SCHEMA_OPTION) != 0 ||
+      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_ELIGIBLE, BB_DB_SCHEMA_ELIGIBLE) != 0 ||
+      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_BALLOT, BB_DB_SCHEMA_BALLOT) != 0 ||
+      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_OWNER, BB_DB_SCHEMA_OWNER) != 0 ||
+      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_NONCE, BB_DB_SCHEMA_NONCE) != 0) {
+    fprintf(stderr, "test_ballotd: fixture: failed to provision tables\n");
+    return -1;
+  }
+
+  tdb_runner_opts_t opts;
+  tdb_runner_opts_default(&opts);
+  snprintf(opts.dir, sizeof opts.dir, "%s", LIVE_DB_DIR);
+  snprintf(opts.jar, sizeof opts.jar, "%s", TEST_JAR);
+  snprintf(opts.ipc, sizeof opts.ipc, "%s", LIVE_DB_SOCK);
+  opts.sessions = 8;
+  opts.recover = 0;
+
+  g_runner = tdb_runner_spawn(&opts, -1);
+  if (g_runner <= 0) {
+    fprintf(stderr, "test_ballotd: fixture: failed to spawn a runner\n");
+    return -1;
+  }
+  if (tdb_runner_wait(LIVE_DB_SOCK, g_runner, 20000) != 0) {
+    fprintf(stderr, "test_ballotd: fixture: runner never accepted a connection\n");
+    stop_runner();
+    return -1;
+  }
+  return 0;
+}
+
 /* ---- harness ------------------------------------------------------------------ */
 
 static void run(const char *name, int (*fn)(void)) {
@@ -500,14 +720,33 @@ int main(void) {
   printf("ballotd end-to-end tests\n");
   run("voter handshake + wrong-channel CREATE rejected", test_voter_handshake_and_wrong_channel_rejected);
   run("ctl channel rejects voter op (JOIN)", test_ctl_rejects_voter_op);
-  run("ctl CREATE succeeds", test_ctl_create_ok);
   run("ctl CREATE invalid config refused", test_ctl_create_invalid_config);
-  run("voter JOIN: not-implemented (stub DB read)", test_voter_join_not_implemented);
-  run("two CREATEs share one admin thread", test_two_creates_share_admin_thread);
+  run("ctl CREATE with no reachable store fails cleanly", test_ctl_create_no_db_fails_cleanly);
+  run("voter JOIN with no reachable store fails cleanly", test_voter_join_no_db_fails_cleanly);
   run("ctl malformed HTTTP gets 400", test_ctl_malformed_http_gets_400);
   run("ctl oversized frame closed, no reply", test_ctl_oversized_frame_closed_without_reply);
   run("SIGTERM shutdown while idle", test_sigterm_shutdown_idle);
   run("SIGTERM shutdown with a worker attached", test_sigterm_shutdown_with_worker_attached);
+
+  if (!runner_disabled() && have_jar() && have_java()) {
+    if (start_live_runner() == 0) {
+      run("ctl CREATE succeeds (live store)", test_ctl_create_ok);
+      run("two CREATEs share one admin thread (live store)", test_two_creates_share_admin_thread);
+      run("CREATE then JOIN round trips (live store)", test_create_then_join_round_trips);
+      stop_runner();
+    } else {
+      tests_failed++;
+    }
+  } else {
+    printf("  (skipping live-store tests: %s)\n",
+           runner_disabled()   ? "TETRISH_NO_RUNNER is set"
+           : !have_jar()       ? "no " TEST_JAR " - run `ant dist` in db/"
+                                : "no java on PATH");
+    if (!runner_disabled() && getenv("TETRISH_REQUIRE_RUNNER") != NULL) {
+      fprintf(stderr, "    FAIL: TETRISH_REQUIRE_RUNNER is set and the runner tests could not run\n");
+      tests_failed++;
+    }
+  }
 
   unlink(CTL_PATH);
   printf("%d/%d passed\n", tests_run - tests_failed, tests_run);

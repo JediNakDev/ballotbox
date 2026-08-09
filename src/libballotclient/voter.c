@@ -77,13 +77,22 @@ bu_join_outcome_t bu_join(bcl_ctx *ctx, bu_session_t *session, const char *elect
   /* A transport failure outranks whatever is left in the response buffer. */
   bb_result_t status = (rc != BB_OK) ? rc : resp.status;
 
+  /* election_id/cert_name may alias fields inside *session (ballotu.c passes
+   * g_session.cert_name back in as the argument) - copied out before any
+   * memset(session, ...) below, or a successful join would zero its own
+   * source string before the snprintf that is meant to restore it. */
+  char election_id_copy[BB_ID_LEN];
+  char cert_name_copy[BB_CERT_LEN];
+  snprintf(election_id_copy, sizeof election_id_copy, "%s", election_id);
+  snprintf(cert_name_copy, sizeof cert_name_copy, "%s", cert_name);
+
   bu_join_outcome_t outcome = bu_classify_join(status, &resp.election);
   switch (outcome) {
     case BU_JOIN_ADMITTED:
       memset(session, 0, sizeof(*session));
       session->joined = 1;
-      snprintf(session->cert_name, BB_CERT_LEN, "%s", cert_name);
-      snprintf(session->election_id, BB_ID_LEN, "%s", election_id);
+      snprintf(session->cert_name, BB_CERT_LEN, "%s", cert_name_copy);
+      snprintf(session->election_id, BB_ID_LEN, "%s", election_id_copy);
       snprintf(session->title, BB_TITLE_LEN, "%s", resp.election.title);
       session->option_count = resp.election.option_count;
       memcpy(session->options, resp.election.options, sizeof(session->options));
@@ -92,7 +101,7 @@ bu_join_outcome_t bu_join(bcl_ctx *ctx, bu_session_t *session, const char *elect
       /* UC-2 alt flow 4a: the election is real, so it is remembered locally for
        * later, but the voter is not joined to it. */
       session->joined = 0;
-      snprintf(session->election_id, BB_ID_LEN, "%s", election_id);
+      snprintf(session->election_id, BB_ID_LEN, "%s", election_id_copy);
       break;
     default:
       /* Timeout / not found / not eligible: no session state is created. */
