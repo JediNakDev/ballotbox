@@ -62,6 +62,7 @@ Postconditions such as "no election created" or "store unchanged" are asserted a
 | U-29 | UC-6   | ECT           | `bb_lookup_hash`      | Lookup: counted hash found            | Hash of a live published ballot                                                            | `BB_OK`, row with the choice returned             | Query carried the voter's hash                   | Done   | `test_brain_lookup`        |
 | U-30 | UC-6   | ECT           | `bb_lookup_hash`      | Lookup: superseded hash excluded      | Hash of a superseded ballot version (not in the live set)                                  | `BB_ERR_NOT_FOUND`                                | Dropped-ballot path triggered client side        | Done   | `test_brain_lookup`        |
 | U-31 | UC-6   | ECT           | `bb_lookup_hash`      | Lookup: unknown hash not found        | Random hash never issued                                                                   | `BB_ERR_NOT_FOUND`, identical to U-30's answer    | Caller's buffer untouched, nothing leaked        | Done   | `test_brain_lookup`        |
+| U-41 | UC-2   | -             | `bb_join`             | Join reports a prior ballot from the store | `out_has_ballot`/`out_ballot_version` requested; store's `GET_PRIOR_BALLOT` answers found/not found | Both out-params filled from the store's answer; refused joins skip the lookup entirely | Query issued only on `BB_OK` admission, never on a refusal | Done | `test_brain_join` |
 
 ### ballotu unit tests
 
@@ -76,6 +77,8 @@ Postconditions such as "no election created" or "store unchanged" are asserted a
 | U-38 | UC-3 | DT rule 3 | `bu_route_vote` / `bu_submit_vote` | Cast flow selected      | Joined, `has_ballot` false                               | `CAST` request sent, receipt returned                    | `has_ballot` true, `my_hash` stored           | Done     | `test_voter`, `test_voter_flow` |
 | U-39 | UC-4 | DT rule 5 | `bu_route_vote` / `bu_submit_vote` | Update flow selected    | Joined, `has_ballot` true                                | `UPDATE` request sent, fresh receipt                     | `ballot_version` incremented                  | Done     | `test_voter`, `test_voter_flow` |
 | U-40 | UC-6 | ECT       | `bu_classify_check` | Dropped ballot flagged          | Daemon reports the derived hash as not found             | `BU_CHECK_DROPPED`                                       | Voter directed to the admin escalation path   | Done     | `test_voter`       |
+| U-42 | UC-2 | -         | `bu_join`           | Rejoin picks up a reported prior ballot | Response carries `has_prior_ballot=1`, `prior_ballot_version=3` | `session.has_ballot=1`, `session.ballot_version=3`        | `bu_route_vote` on this session now selects `BU_UPDATE` | Done | `test_voter_flow` |
+| U-43 | UC-5 | -         | `bb_get_results` / `bb_get_results_admin` | Results carry the election title | Loaded election has a title (both entry points share `fetch_results`) | `out.title` set from the loaded election                 | -                                              | Done     | `test_brain_results` |
 
 Guard cases beyond the numbered rows are in the same files: validation ordering, store-failure propagation (a failed lookup is never reported to a voter as a dropped ballot), session reset on re-join, and the client pre-validator agreeing with the daemon's validator (`test_admin`).
 
@@ -142,9 +145,11 @@ Precondition: real `ballotd` with seeded elections.
 | I-10 | ballotu → libtetrissh → ballotd | UC-2   | All four refusal partitions | Wrong host; unknown ID; ineligible cert; non-open state | Timeout / not found / not eligible / not open, each distinct | No session created in any branch       |
 | I-11 | ballotu → libtetrissh → ballotd | UC-3   | Encrypted cast over session | Joined voter casts a vote                               | Receipt hash displayed                                       | Wire traffic is ciphertext only        |
 | I-12 | ballotu → libtetrissh → ballotd | UC-3/4 | Close race (DT rules 2, 4)  | Voter submits as ballotctl closes the election          | Rejection shown to voter                                     | No partial ballot stored               |
-| I-13 | ballotu → libtetrissh → ballotd | UC-5   | Published tally displayed   | Observer requests published election                    | Tally plus hash list grouped by option                       | -                                      |
+| I-13 | ballotu → libtetrissh → ballotd | UC-5   | Published tally displayed   | Observer requests published election                    | Title, id and counted tally shown (no per-ballot hash listing - each voter already saw their own receipt at cast/update time) | -                                      |
 | I-14 | ballotu → libtetrissh → ballotd | UC-5   | Results gated               | Observer requests `CLOSED` election                     | "results not available"                                      | No tally data leaves the daemon        |
 | I-15 | ballotu → libtetrissh → ballotd | UC-6   | Hash lookup both branches   | Key of counted ballot; key of superseded ballot         | Found and counted; not found flagged as dropped              | Choice revealed only to the key holder |
+| I-16 | ballotu → libtetrissh → ballotd | UC-2/3/4 | Rejoin after cast routes to update | Cast a ballot, disconnect, fresh client + fresh session, log in and JOIN the same election again | Rejoin reports the prior ballot; a subsequent vote is a real `UPDATE`, not a silent overwrite | Prior receipt superseded, new one live, exactly one counted ballot for that voter |
+| I-17 | ballotctl → ballotd (local)     | UC-5   | Results wire response carries the title | `ADMIN_RESULTS` after create/open/close/publish          | Response's election id and title match what was created      | -                                      |
 
 ---
 
@@ -200,7 +205,7 @@ All unit cases run today except U-32, and they stay green as the seams are imple
 
 | Milestone                                                       | Unit cases                     | What is missing                                                                                                                                                        |
 | ----------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Available today** - all logic, seams substituted (`make test`) | U-01 .. U-31, U-33 .. U-40     | Nothing.                                                                                                                                                               |
+| **Available today** - all logic, seams substituted (`make test`) | U-01 .. U-31, U-33 .. U-43     | Nothing.                                                                                                                                                               |
 | **Crypto/PKI** - real keys behind the crypto seams              | U-32, plus a re-run of U-33/U-34 | U-32 tests the RSA-OAEP round trip itself, which is the one thing a substitute cannot stand in for. U-33/U-34 pass against the placeholder KDF and are re-run for real. |
 
 The seam implementations themselves (SimpleDB behind `db_exec`, libtetrissh behind `bcl_send`, OpenSSL behind the crypto seams) are covered by the integration and infrastructure cases below, not by unit cases.
@@ -215,5 +220,5 @@ D-07 and D-08 need a JVM and `db/dist/simpledb.jar`; on a machine with neither t
 | Prerequisite feature                                              | Integration cases | Direction                        | Gate                                           |
 | ----------------------------------------------------------------- | ----------------- | -------------------------------- | ---------------------------------------------- |
 | SimpleDB behind `BallotStore.exec` (`db_exec`), via `libtetrisdb` | I-01..I-06        | Backend, bottom-up               | D-01..D-08 green first, then persistence and concurrency cases |
-| `ballotd` assembled + local admin channel                         | I-07, I-08        | Frontend, admin path (local)     | Invalid config surfaced; election opens        |
-| Transport: `libtetrissh` behind `SecureSession.send` (`bcl_send`) | I-09..I-15        | Frontend, voter path (encrypted) | UC-2 refusal partitions + ciphertext-only wire |
+| `ballotd` assembled + local admin channel                         | I-07, I-08, I-17  | Frontend, admin path (local)     | Invalid config surfaced; election opens        |
+| Transport: `libtetrissh` behind `SecureSession.send` (`bcl_send`) | I-09..I-16        | Frontend, voter path (encrypted) | UC-2 refusal partitions + ciphertext-only wire |

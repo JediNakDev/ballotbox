@@ -142,6 +142,10 @@ typedef struct {
  * back it. Like bb_ballot_hash_t, it carries no voter identity.
  */
 typedef struct {
+  char title[BB_TITLE_LEN]; /* same free reuse of the already-loaded election
+                              * as options[] below - so a results screen can
+                              * show the title next to the id the caller
+                              * already typed, not just the id alone */
   int tally[BB_MAX_OPTIONS];
   int option_count;
   char options[BB_MAX_OPTIONS][BB_OPTION_LEN]; /* names, parallel to tally[] -

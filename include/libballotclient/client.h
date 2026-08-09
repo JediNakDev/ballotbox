@@ -57,6 +57,8 @@ typedef struct {
 typedef struct {
   bb_result_t status;
   bb_election_t election;               /* JOIN / RESULTS */
+  int has_prior_ballot;                 /* JOIN: 1 if this voter already has a ballot here */
+  int prior_ballot_version;             /* JOIN: that ballot's version, if has_prior_ballot */
   bb_receipt_t receipt;                 /* CAST / UPDATE */
   int tally[BB_MAX_OPTIONS];            /* RESULTS */
   int option_count;                     /* RESULTS: how many of tally[]/options[]
@@ -89,6 +91,31 @@ bb_result_t bcl_connect(bcl_ctx *ctx, const char *host, int port, const char *ca
  * link the real transport) - call this yourself before bcl_destroy if you
  * connected. */
 void bcl_disconnect(bcl_ctx *ctx);
+
+/*
+ * The pre-auth exchange, client side: send one LOGIN or REGISTER over the
+ * session bcl_connect() already opened, wait for ballotd's tauth_login()
+ * (libtetrisauth, unmodified) to answer, and hand back the raw HTTTP status
+ * - 200 success (a JWT rides in the body; nothing here reads it, same as
+ * tetriSH's own client - see docs/libtetrisauth.md), 400 malformed, 401
+ * wrong password, 404 no such user, 409 username taken (REGISTER only), 500
+ * account service unreachable. Separate from bcl_send: LOGIN/REGISTER are
+ * not bcl_op_t values (that enum is BallotBox's ballot protocol; this is
+ * tetriSH's account protocol, riding the same wire), and tauth_login() owns
+ * the exchange on the daemon side before any bcl_op_t request is even
+ * legal - see ballotd/session.c's call site.
+ *
+ * `method` must be "LOGIN" or "REGISTER" (case-sensitive, matches
+ * tauth.c's auth_method_of()). `password` is never copied by this
+ * function beyond the one stack buffer it builds the wire body in and
+ * scrubs before returning - callers should scrub their own copy too.
+ *
+ * Returns 0 with *out_status set to the response's HTTTP status, or -1 on
+ * a transport-level failure (not connected, send/recv/parse error) with
+ * *out_status untouched.
+ */
+int bcl_auth(bcl_ctx *ctx, const char *method, const char *username, const char *password,
+             int *out_status);
 
 /*
  * Name the local admin socket (ballotd's ctl_frame-framed AF_UNIX channel)

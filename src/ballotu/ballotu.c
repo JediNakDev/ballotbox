@@ -8,24 +8,22 @@
  * a main.c + screens.c split, so the old files and this one can never be
  * wildcarded together into the same binary by accident.
  *
- * IMPORTANT, read before running this against a real ballotd: the database
- * seam (db_exec) is still a stub - every read (GET_ELECTION, GET_TALLY,
- * FIND_HASH, ...) returns BB_ERR_NOT_IMPLEMENTED. JOIN needs a read before
- * it can do anything else, so today EVERY join attempt fails that way -
- * this is the frozen DB boundary working as intended, not a bug here. Once
- * that lands, nothing in this file needs to change.
- *
- * Also: bb_verify_cert (the daemon's cert-identity seam) is a placeholder
- * that accepts any non-empty name, and this channel authenticates the
- * SERVER to the client (tetrissh), not the other way around - so login here
- * cannot reject a bad cert name the way the old mock did. That check has
- * genuinely moved to JOIN in the real protocol; it just cannot succeed yet
- * either, for the reason above.
+ * Identity is real, not typed-and-trusted: after connecting, this file runs
+ * a genuine log-in-or-register exchange (bcl_auth, over the same session,
+ * answered daemon-side by libtetrisauth's tauth_login() - unmodified, the
+ * same library and the same PBKDF2/JWT machinery tetriSH's own tetrisu
+ * uses) before anything voter-shaped is possible. The certificate name used
+ * for eligibility from here on is the SERVER's confirmed username, not
+ * anything this file could claim on its own - ballotd overwrites whatever a
+ * request's Cert-Name header says with the tauth_login()-verified identity
+ * (see ballotd/session.c), so a forged header buys nothing.
  */
 
 #include "libballotclient/voter.h"
+#include "libcommon/playername.h"
 #include "libtetrisui/tetrisui.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,53 +78,134 @@ static const char *result_text(bb_result_t rc) {
 
 /* ---- login / connect ---------------------------------------------------- */
 
-/* Eligibility (bb_check_eligibility) is a byte-exact strcmp - a stray space
- * from this input box would silently never match an eligible-list entry
- * typed without one. Trimmed here so this side of that comparison is never
- * the reason it fails. */
-static void trim_inplace(char *s) {
-  size_t start = 0;
-  while (s[start] == ' ') start++;
-  size_t len = strlen(s + start);
-  memmove(s, s + start, len + 1);
-  while (len > 0 && s[len - 1] == ' ') s[--len] = '\0';
-}
+/* REGISTER's password bounds, mirroring libtetrisauth/credential.c's private
+ * CRED_PASS_MIN/CRED_PASS_MAX (not exported - tauth_login() enforces the
+ * real rule server-side regardless; this only saves a wire round trip on
+ * input that would just come back 400). Never enforced at LOGIN: raising
+ * this later must not make an existing shorter password unloggable, same
+ * reasoning tetriSH's own client follows. */
+#define AUTH_PASS_MIN 8
+#define AUTH_PASS_MAX 128
 
-static int screen_login(void) {
+/* One log-in-or-register attempt: a two-field form (password masked, bit 1),
+ * sent as a real LOGIN/REGISTER over the session already open, answered by
+ * ballotd's tauth_login(). Returns 1 with g_session.cert_name set to the
+ * server-confirmed username on success, 0 if the form was cancelled back to
+ * the caller's menu. Loops on a rejection (wrong password, taken username,
+ * ...) by reopening the same form with an inline error, same shape as
+ * tetrisu's screen_auth.c. */
+static int screen_credential_flow(bool registering) {
+  char values[2][TETRISUI_FIELD_LEN] = {"", ""};
+  const char *labels[2] = {"Username", "Password"};
+  const char *error = NULL;
+  int start_field = 0;
+
   for (;;) {
-    char name[BB_CERT_LEN] = "";
-    if (tetrisui_input("ballotu - login", "Enter your cert name (Esc to quit):", name,
-                       sizeof(name)) != 0) {
-      return 0;
+    if (tetrisui_form_ex(registering ? "Register" : "Log in", labels, values, 2, 1u << 1, error,
+                         start_field) != 0) {
+      return 0; /* cancelled: back to the Log in / Register menu */
     }
-    trim_inplace(name);
-    if (strlen(name) == 0) continue;
 
-    const char *steps[] = {"Opening secure session", "Presenting cert (tetrissh handshake)"};
-    tetrisui_progress_begin("Authenticating", steps, 2);
-    bb_result_t rc = bcl_connect(g_ctx, g_host, g_port, g_ca_path);
-    /* One real round trip covers both steps - see client.h's bcl_connect
-     * doc comment for why the two are not reported separately. */
-    tetrisui_progress_step(0, rc == BB_OK);
-    tetrisui_progress_step(1, rc == BB_OK);
-    tetrisui_progress_end();
-
-    if (rc != BB_OK) {
-      char line[96];
-      snprintf(line, sizeof(line), "Could not reach ballotd at %s:%d.", g_host, g_port);
-      const char *lines[] = {line, "Check the server is running and try again."};
-      tetrisui_message("Connection failed", lines, 2);
+    char folded[MAX_PLAYER_NAME];
+    size_t ulen = strlen(values[0]);
+    if (!player_name_ok(values[0], ulen) || player_name_fold(folded, sizeof folded, values[0], ulen) != 0) {
+      error = "Username must be 1-15 characters: letters, digits, _ or -.";
+      start_field = 0;
       continue;
     }
 
-    memset(&g_session, 0, sizeof(g_session));
-    snprintf(g_session.cert_name, BB_CERT_LEN, "%s", name);
-    tetrisui_set_status("ballotu", name, "");
-    return 1;
+    size_t plen = strlen(values[1]);
+    if (plen == 0) {
+      error = "Password is required.";
+      start_field = 1;
+      continue;
+    }
+    if (registering && (plen < AUTH_PASS_MIN || plen > AUTH_PASS_MAX)) {
+      error = "Password must be 8-128 characters.";
+      start_field = 1;
+      continue;
+    }
+
+    const char *steps[] = {registering ? "Registering" : "Logging in"};
+    tetrisui_progress_begin("Contacting ballotd", steps, 1);
+    int status = 0;
+    int rc = bcl_auth(g_ctx, registering ? "REGISTER" : "LOGIN", folded, values[1], &status);
+    tetrisui_progress_step(0, rc == 0 && status == 200);
+    tetrisui_progress_end();
+    memset(values[1], 0, sizeof values[1]); /* scrub the typed password either way */
+
+    if (rc != 0) {
+      error = "Could not reach ballotd.";
+      start_field = 0;
+      continue;
+    }
+
+    switch (status) {
+      case 200:
+        memset(&g_session, 0, sizeof(g_session));
+        snprintf(g_session.cert_name, BB_CERT_LEN, "%s", folded);
+        tetrisui_set_status("ballotu", folded, "");
+        return 1;
+      case 400:
+        error = "Rejected: malformed request.";
+        start_field = 0;
+        break;
+      case 401:
+        error = "Incorrect password.";
+        start_field = 1;
+        break;
+      case 404:
+        error = "No account with that username. Register instead?";
+        start_field = 0;
+        break;
+      case 409:
+        error = "That username is already taken - pick another.";
+        start_field = 0;
+        break;
+      case 500:
+      default:
+        error = "Could not reach the account service - try again shortly.";
+        start_field = 0;
+        break;
+    }
+  }
+}
+
+static int screen_login(void) {
+  const char *steps[] = {"Opening secure session", "Presenting cert (tetrissh handshake)"};
+  tetrisui_progress_begin("Connecting", steps, 2);
+  bb_result_t rc = bcl_connect(g_ctx, g_host, g_port, g_ca_path);
+  /* One real round trip covers both steps - see client.h's bcl_connect
+   * doc comment for why the two are not reported separately. */
+  tetrisui_progress_step(0, rc == BB_OK);
+  tetrisui_progress_step(1, rc == BB_OK);
+  tetrisui_progress_end();
+
+  if (rc != BB_OK) {
+    char line[96];
+    snprintf(line, sizeof(line), "Could not reach ballotd at %s:%d.", g_host, g_port);
+    const char *lines[] = {line, "Check the server is running and try again."};
+    tetrisui_message("Connection failed", lines, 2);
+    return 0;
+  }
+
+  for (;;) {
+    const char *items[] = {"Log in", "Register"};
+    int sel = tetrisui_menu("ballotu - login", items, 2, "Esc to quit");
+    if (sel < 0) {
+      bcl_disconnect(g_ctx);
+      return 0;
+    }
+    if (screen_credential_flow(sel == 1)) return 1;
+    /* form was cancelled: stay connected, back to this menu */
   }
 }
 
 /* ---- UC-2: join ----------------------------------------------------------- */
+
+/* Defined below (UC-3/UC-4) - forward declared so screen_join_election can
+ * actually route into it rather than just announcing that it would. */
+static void cast_common(int is_update);
 
 static void screen_join_election(void) {
   char id[BB_ID_LEN] = "";
@@ -172,10 +251,21 @@ static void screen_join_election(void) {
       break;
   }
 
+  /* The status bar's third field is otherwise blank for ballotu (set to ""
+   * at login) - once a JOIN is admitted there is a current election to show,
+   * so it reads there for every screen from here on, same as the app/actor
+   * fields already do. g_state is 32 bytes; snprintf here guarantees NUL
+   * termination within that even if id+title together would not fit,
+   * unlike tetrisui_set_status's own strncpy on a too-long source. */
+  char state[32];
+  snprintf(state, sizeof(state), "%s: %s", g_session.election_id, g_session.title);
+  tetrisui_set_status("ballotu", g_session.cert_name, state);
+
   if (g_session.has_ballot) {
     const char *lines[] = {"You already have a ballot for this election.",
                            "Routing you to Update Vote (UC-4)."};
     tetrisui_message("Already voted", lines, 2);
+    cast_common(1); /* the message above is the routing, not just an announcement of it */
     return;
   }
 
@@ -281,12 +371,19 @@ static void screen_view_results(void) {
     return;
   }
 
-  enum { COL_W = 66, MAX_LINES = BB_MAX_OPTIONS + BB_MAX_VOTERS + 6 };
-  static char buf[MAX_LINES][BB_MAX_OPTIONS * COL_W + 1];
+  /* Counted tally only - no per-ballot hash listing. Each voter already saw
+   * their own receipt hash at cast/update time (UC-3/UC-4) and can verify it
+   * individually via Check your vote (UC-6); listing every hash here bought
+   * nothing a voter needed and only added noise to the result. */
+  enum { MAX_LINES = BB_MAX_OPTIONS + 3 };
+  static char buf[MAX_LINES][96];
   const char *lines[MAX_LINES];
   int n = 0;
 
-  snprintf(buf[n], sizeof(buf[n]), "%s", id);
+  snprintf(buf[n], sizeof(buf[n]), "Title: %s", resp.election.title);
+  lines[n] = buf[n];
+  n++;
+  snprintf(buf[n], sizeof(buf[n]), "ID: %s", id);
   lines[n] = buf[n];
   n++;
   snprintf(buf[n], sizeof(buf[n]), "Tally:");
@@ -299,35 +396,6 @@ static void screen_view_results(void) {
     memset(bar, '#', (size_t)fill);
     bar[fill] = '\0';
     snprintf(buf[n], sizeof(buf[n]), "  %-10s %3d %s", resp.options[i], resp.tally[i], bar);
-    lines[n] = buf[n];
-    n++;
-  }
-  snprintf(buf[n], sizeof(buf[n]), "Ballot hashes (counted votes, one column per option):");
-  lines[n] = buf[n];
-  n++;
-
-  /* Group counted (non-superseded) hashes by option, one column each -
-   * same layout the old mock UI used. */
-  int per[BB_MAX_OPTIONS][BB_MAX_VOTERS];
-  int cnt[BB_MAX_OPTIONS] = {0};
-  int max_cnt = 0;
-  for (int i = 0; i < resp.hash_count; i++) {
-    if (resp.hashes[i].superseded) continue;
-    int o = resp.hashes[i].option_index;
-    if (o < 0 || o >= BB_MAX_OPTIONS) continue;
-    per[o][cnt[o]++] = i;
-    if (cnt[o] > max_cnt) max_cnt = cnt[o];
-  }
-  int pos = 0;
-  for (int o = 0; o < resp.option_count; o++)
-    pos += snprintf(buf[n] + pos, sizeof(buf[n]) - (size_t)pos, "%-*s", COL_W, resp.options[o]);
-  lines[n] = buf[n];
-  n++;
-  for (int r = 0; r < max_cnt; r++) {
-    pos = 0;
-    for (int o = 0; o < resp.option_count; o++)
-      pos += snprintf(buf[n] + pos, sizeof(buf[n]) - (size_t)pos, "%-*s", COL_W,
-                      r < cnt[o] ? resp.hashes[per[o][r]].hash : "");
     lines[n] = buf[n];
     n++;
   }

@@ -162,13 +162,18 @@ TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR) -Itests/unit/support
 # live there too) calls tdb_socket_* directly. No test needs to fake it (it
 # degrades to a fixed id when unreachable), but the symbols still need to
 # resolve.
+# -lcommon: bc_fold_eligible (admin.c) calls libcommon/playername.c's
+# player_name_ok/player_name_fold directly (the same fold every real
+# username goes through), so libballotclient.a now has an unresolved
+# reference into libcommon.a for every test that links it - which, per the
+# note above, is all of them.
 # --start-group: same archive-ordering fragility as the top-level LDLIBS -
 # see that comment. Each test defines the seams it wants to substitute;
 # because the libraries are static archives, a seam defined in the test keeps
 # the real member out of the binary (see tests/unit/support/fake_*_seams.h).
-TEST_LDLIBS := -L$(LIB_DIR) -Wl,--start-group -lballotclient -lballotbrain -lhtttp -ltetrissh -ltetrisdb -Wl,--end-group -lssl -lcrypto -lpthread
+TEST_LDLIBS := -L$(LIB_DIR) -Wl,--start-group -lballotclient -lballotbrain -lhtttp -ltetrissh -ltetrisdb -lcommon -Wl,--end-group -lssl -lcrypto -lpthread
 
-$(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libtetrisdb.a $(HEADERS)
+$(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libcommon.a $(HEADERS)
 	$(CC) $(TEST_CFLAGS) $< $(UNITY_DIR)/unity.c -o $@ $(TEST_LDLIBS)
 
 # test_db is not a Unity test: it brings its own harness and lives in tests/

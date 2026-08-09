@@ -203,6 +203,8 @@ void test_results_response_roundtrip(void) {
   bcl_response_t in;
   memset(&in, 0, sizeof in);
   in.status = BB_OK;
+  snprintf(in.election.id, BB_ID_LEN, "E-100");
+  snprintf(in.election.title, BB_TITLE_LEN, "Favourite colour");
   in.option_count = 2;
   in.tally[0] = 14;
   in.tally[1] = 6;
@@ -222,6 +224,8 @@ void test_results_response_roundtrip(void) {
   roundtrip_response(BCL_RESULTS, &in, &out);
 
   TEST_ASSERT_EQUAL_INT(BB_OK, out.status);
+  TEST_ASSERT_EQUAL_STRING("E-100", out.election.id);
+  TEST_ASSERT_EQUAL_STRING("Favourite colour", out.election.title);
   TEST_ASSERT_EQUAL_INT(2, out.option_count);
   TEST_ASSERT_EQUAL_INT(14, out.tally[0]);
   TEST_ASSERT_EQUAL_INT(6, out.tally[1]);

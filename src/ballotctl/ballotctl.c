@@ -142,7 +142,11 @@ static int screen_login(void) {
  * stray space typed on either side of a comma here silently produces a cert
  * name that can never match what a voter types at login (#seen in testing:
  * "Kenji , Pop, Jedi" stored "Kenji " as the first eligible entry). Trimmed
- * on both ends so the field's own formatting habits cannot cause that. */
+ * on both ends so the field's own formatting habits cannot cause that.
+ *
+ * Also used for the options field, which is free text and must NOT be
+ * case-folded (unlike eligible voter certs - see bc_fold_eligible,
+ * libballotclient/admin.c, applied by the one caller that needs it). */
 static void split_csv(const char *src, char out[][BB_OPTION_LEN], int max, int *count) {
   *count = 0;
   char buf[256];
@@ -172,7 +176,7 @@ void screen_create_election(void) {
   const char *labels[6] = {"Title",
                            "Election ID",
                            "Options (comma-separated)",
-                           "Eligible voter certs (comma-separated)",
+                           "Eligible voter usernames (comma-separated, not case-sensitive)",
                            "Open time",
                            "Close time"};
 
@@ -200,6 +204,16 @@ void screen_create_election(void) {
     split_csv(values[3], config.eligible, BB_MAX_VOTERS, &config.eligible_count);
     snprintf(config.open_time, BB_TIME_LEN, "%s", values[4]);
     snprintf(config.close_time, BB_TIME_LEN, "%s", values[5]);
+
+    char bad_entry[BB_CERT_LEN];
+    if (bc_fold_eligible(config.eligible, &config.eligible_count, bad_entry, sizeof bad_entry) != 0) {
+      char line1[104];
+      snprintf(line1, sizeof line1, "'%s' is not a valid username: 1-15 chars, letters/digits/_/-.",
+              bad_entry);
+      const char *lines[] = {line1, "Staying in Draft - fix and retry."};
+      tetrisui_message("Rejected (alt flow 4a)", lines, 2);
+      continue;
+    }
 
     bcl_request_t req;
     bb_result_t vr = bc_build_create(&config, &req);
@@ -293,12 +307,19 @@ void screen_view_results(void) {
     return;
   }
 
-  enum { COL_W = 66, MAX_LINES = BB_MAX_OPTIONS + BB_MAX_VOTERS + 6 };
-  static char buf[MAX_LINES][BB_MAX_OPTIONS * COL_W + 1];
+  /* Counted tally only - no per-ballot hash listing. A voter who wants to
+   * verify their own receipt hash still can, via Check a ballot (UC-6);
+   * listing every hash here bought nothing an admin needed and only added
+   * noise to the result. Same trim as ballotu's screen_view_results. */
+  enum { MAX_LINES = BB_MAX_OPTIONS + 3 };
+  static char buf[MAX_LINES][96];
   const char *lines[MAX_LINES];
   int n = 0;
 
-  snprintf(buf[n], sizeof(buf[n]), "%s", id);
+  snprintf(buf[n], sizeof(buf[n]), "Title: %s", resp.election.title);
+  lines[n] = buf[n];
+  n++;
+  snprintf(buf[n], sizeof(buf[n]), "ID: %s", id);
   lines[n] = buf[n];
   n++;
   snprintf(buf[n], sizeof(buf[n]), "Tally:");
@@ -311,33 +332,6 @@ void screen_view_results(void) {
     memset(bar, '#', (size_t)fill);
     bar[fill] = '\0';
     snprintf(buf[n], sizeof(buf[n]), "  %-10s %3d %s", resp.options[i], resp.tally[i], bar);
-    lines[n] = buf[n];
-    n++;
-  }
-  snprintf(buf[n], sizeof(buf[n]), "Ballot hashes (counted votes, one column per option):");
-  lines[n] = buf[n];
-  n++;
-
-  int per[BB_MAX_OPTIONS][BB_MAX_VOTERS];
-  int cnt[BB_MAX_OPTIONS] = {0};
-  int max_cnt = 0;
-  for (int i = 0; i < resp.hash_count; i++) {
-    if (resp.hashes[i].superseded) continue;
-    int o = resp.hashes[i].option_index;
-    if (o < 0 || o >= BB_MAX_OPTIONS) continue;
-    per[o][cnt[o]++] = i;
-    if (cnt[o] > max_cnt) max_cnt = cnt[o];
-  }
-  int pos = 0;
-  for (int o = 0; o < resp.option_count; o++)
-    pos += snprintf(buf[n] + pos, sizeof(buf[n]) - (size_t)pos, "%-*s", COL_W, resp.options[o]);
-  lines[n] = buf[n];
-  n++;
-  for (int r = 0; r < max_cnt; r++) {
-    pos = 0;
-    for (int o = 0; o < resp.option_count; o++)
-      pos += snprintf(buf[n] + pos, sizeof(buf[n]) - (size_t)pos, "%-*s", COL_W,
-                      r < cnt[o] ? resp.hashes[per[o][r]].hash : "");
     lines[n] = buf[n];
     n++;
   }
