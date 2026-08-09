@@ -40,8 +40,11 @@
 #include "ballotd/control_plane.h"
 #include "ballotd/dispatch.h"
 #include "libballotbrain/ballotbrain.h"
+#include "libballotbrain/db.h"
 #include "libballotclient/codec.h"
 #include "libcommon/rc.h"
+#include "libtetrisdb/schema.h"
+#include "libtetrisdb/socket/conf.h"
 
 #define DEFAULT_PORT 7676 /* TODO: confirm no collision once other daemons pick theirs */
 #define DEFAULT_CERT "auth/server_signed.crt"
@@ -56,6 +59,9 @@ typedef struct {
   char cert_path[PATH_MAX];
   char key_path[PATH_MAX];
   char ctl_path[PATH_MAX];
+  char db_dir[PATH_MAX];      /* tdb_ensure_table() target; db_dir rc key */
+  char db_sock[PATH_MAX];     /* SocketRunner unix socket; db_ipc rc key */
+  int db_timeout_ms;          /* db_timeout rc key */
 } ballotd_opts_t;
 
 /* One new worker, announced by listener_thread to admin_thread. */
@@ -93,18 +99,29 @@ static void rc_apply(const char *key, const char *value, void *ctxp) {
     snprintf(o->key_path, sizeof o->key_path, "%s", value);
   } else if (strcmp(key, "ballotd_ctl_ipc") == 0) {
     snprintf(o->ctl_path, sizeof o->ctl_path, "%s", value);
+  } else if (strcmp(key, "db_dir") == 0) {
+    snprintf(o->db_dir, sizeof o->db_dir, "%s", value);
+  } else if (strcmp(key, "db_ipc") == 0) {
+    snprintf(o->db_sock, sizeof o->db_sock, "%s", value);
+  } else if (strcmp(key, "db_timeout") == 0) {
+    char *end;
+    long n = strtol(value, &end, 10);
+    if (*end == '\0' && n >= TDB_TIMEOUT_MIN_MS && n <= TDB_TIMEOUT_MAX_MS) o->db_timeout_ms = (int)n;
   }
 }
 
 static void usage(FILE *out, const char *argv0) {
   fprintf(out,
-          "usage: %s [-p port] [-c cert] [-k key] [-C ctl_socket] [-h]\n"
+          "usage: %s [-p port] [-c cert] [-k key] [-C ctl_socket] [-d db_dir] [-i db_sock] [-h]\n"
           "  -p port        TCP port for the voter channel (default %d)\n"
           "  -c cert        server certificate PEM (default %s)\n"
           "  -k key         server private key PEM (default %s)\n"
           "  -C ctl_socket  admin Unix socket path (default %s)\n"
+          "  -d db_dir      SimpleDB data directory, table provisioning (default %s)\n"
+          "  -i db_sock     SocketRunner unix socket (default %s)\n"
           "  -h             show this help\n",
-          argv0, DEFAULT_PORT, DEFAULT_CERT, DEFAULT_KEY, CTL_SOCK_DEFAULT);
+          argv0, DEFAULT_PORT, DEFAULT_CERT, DEFAULT_KEY, CTL_SOCK_DEFAULT, TDB_DEFAULT_DIR,
+          TDB_DEFAULT_IPC);
 }
 
 /* ------------------------------------------------------------------ */
@@ -399,11 +416,16 @@ int main(int argc, char **argv) {
   snprintf(opts.cert_path, sizeof opts.cert_path, "%s", DEFAULT_CERT);
   snprintf(opts.key_path, sizeof opts.key_path, "%s", DEFAULT_KEY);
   snprintf(opts.ctl_path, sizeof opts.ctl_path, "%s", CTL_SOCK_DEFAULT);
+  snprintf(opts.db_dir, sizeof opts.db_dir, "%s", TDB_DEFAULT_DIR);
+  snprintf(opts.db_sock, sizeof opts.db_sock, "%s", TDB_DEFAULT_IPC);
+  opts.db_timeout_ms = TDB_DEFAULT_TIMEOUT_MS;
 
-  rc_load(RC_PATH, rc_apply, &opts);
+  if (rc_load(RC_PATH, rc_apply, &opts) < 0) {
+    /* missing rc file: defaults stand */
+  }
 
   int opt;
-  while ((opt = getopt(argc, argv, "p:c:k:C:h")) != -1) {
+  while ((opt = getopt(argc, argv, "p:c:k:C:d:i:h")) != -1) {
     switch (opt) {
       case 'p': {
         char *end;
@@ -423,6 +445,12 @@ int main(int argc, char **argv) {
         break;
       case 'C':
         snprintf(opts.ctl_path, sizeof opts.ctl_path, "%s", optarg);
+        break;
+      case 'd':
+        snprintf(opts.db_dir, sizeof opts.db_dir, "%s", optarg);
+        break;
+      case 'i':
+        snprintf(opts.db_sock, sizeof opts.db_sock, "%s", optarg);
         break;
       case 'h':
         usage(stdout, argv[0]);
@@ -459,11 +487,36 @@ int main(int argc, char **argv) {
    * the daemon outright, not race a thread that is already running. */
   if (ctl_open(opts.ctl_path, g_quit[0], g_quit[1], g_ctl_notify[1]) < 0) return 1;
 
+  /*
+   * Provision every BallotBox table before doing anything else. Like
+   * bin/tetrisdb ensuring TETRISAUTH_DB_TABLE in its own main() before
+   * spawning the runner, this only takes effect if it runs before the
+   * SocketRunner has started for this db_dir - the runner reads catalog.txt
+   * once at startup and never again (tdb_ensure_table's contract). It is
+   * therefore purely a filesystem operation here, independent of whether the
+   * runner is currently reachable.
+   */
+  if (tdb_ensure_table(opts.db_dir, BB_DB_TABLE_ELECTION, BB_DB_SCHEMA_ELECTION) != 0 ||
+      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_OPTION, BB_DB_SCHEMA_OPTION) != 0 ||
+      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_ELIGIBLE, BB_DB_SCHEMA_ELIGIBLE) != 0 ||
+      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_BALLOT, BB_DB_SCHEMA_BALLOT) != 0 ||
+      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_OWNER, BB_DB_SCHEMA_OWNER) != 0 ||
+      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_NONCE, BB_DB_SCHEMA_NONCE) != 0) {
+    fprintf(stderr, "ballotd: failed to provision tables under '%s'\n", opts.db_dir);
+    return 1;
+  }
+
   g_ctx = bb_create();
   if (g_ctx == NULL) {
     fprintf(stderr, "ballotd: bb_create failed\n");
     return 1;
   }
+
+  tdb_socket_opts_t db_opts;
+  tdb_socket_opts_default(&db_opts);
+  snprintf(db_opts.sock, sizeof db_opts.sock, "%s", opts.db_sock);
+  db_opts.timeout_ms = opts.db_timeout_ms;
+  bb_set_db_opts(g_ctx, &db_opts);
 
   pthread_t listener, admin, ctl;
   int rc;

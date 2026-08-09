@@ -80,6 +80,18 @@ static const char *result_text(bb_result_t rc) {
 
 /* ---- login / connect ---------------------------------------------------- */
 
+/* Eligibility (bb_check_eligibility) is a byte-exact strcmp - a stray space
+ * from this input box would silently never match an eligible-list entry
+ * typed without one. Trimmed here so this side of that comparison is never
+ * the reason it fails. */
+static void trim_inplace(char *s) {
+  size_t start = 0;
+  while (s[start] == ' ') start++;
+  size_t len = strlen(s + start);
+  memmove(s, s + start, len + 1);
+  while (len > 0 && s[len - 1] == ' ') s[--len] = '\0';
+}
+
 static int screen_login(void) {
   for (;;) {
     char name[BB_CERT_LEN] = "";
@@ -87,6 +99,7 @@ static int screen_login(void) {
                        sizeof(name)) != 0) {
       return 0;
     }
+    trim_inplace(name);
     if (strlen(name) == 0) continue;
 
     const char *steps[] = {"Opening secure session", "Presenting cert (tetrissh handshake)"};
@@ -324,21 +337,25 @@ static void screen_view_results(void) {
 /* ---- UC-6: check your vote -------------------------------------------------- */
 
 static void screen_check_vote(void) {
-  char key[64] = "";
-  if (tetrisui_input("Check your vote (UC-6)", "Enter your secret ballot key:", key,
-                     sizeof(key)) != 0)
+  /* Server-side FIND_HASH is a direct, literal lookup of the receipt hash
+   * bu_submit_vote showed after casting (bb_issue_receipt derives it from
+   * the ballot's nonce+version, not from any client-held secret) - so this
+   * screen asks for and sends that same hash verbatim. bu_derive_receipt
+   * (a from-a-secret-key KDF) is unrelated to that derivation today and
+   * would never match a real stored hash; it stays as scaffolding for a
+   * future real commitment scheme, just not wired in here until the server
+   * side actually uses a matching KDF. */
+  char hash[BB_HASH_LEN] = "";
+  if (tetrisui_input("Check your vote (UC-6)", "Enter your receipt hash:", hash, sizeof(hash)) !=
+      0)
     return;
-  if (strlen(key) == 0) return;
+  if (strlen(hash) == 0) return;
 
   char id[BB_ID_LEN] = "";
   if (tetrisui_input("Check your vote (UC-6)", "Enter the election ID to check against:", id,
                      sizeof(id)) != 0)
     return;
   if (strlen(id) == 0) return;
-
-  char hash[BB_HASH_LEN];
-  memset(hash, 0, sizeof(hash));
-  bu_derive_receipt(g_ctx, key, hash);
 
   bcl_request_t req;
   memset(&req, 0, sizeof(req));
@@ -358,14 +375,14 @@ static void screen_check_vote(void) {
   switch (outcome) {
     case BU_CHECK_COUNTED: {
       char line2[96];
-      snprintf(line2, sizeof(line2), "Your vote is option index %d and is included in the tally.",
-              resp.found_option);
+      snprintf(line2, sizeof(line2), "Your vote is option index %d (%s) and is included in the tally.",
+              resp.found_option, resp.found_option_name);
       const char *lines[] = {line1, line2};
       tetrisui_message("Verified", lines, 2);
       return;
     }
     case BU_CHECK_DROPPED: {
-      const char *lines[] = {line1, "Hash not found in the published tally.",
+      const char *lines[] = {line1, "Hash not found among live (non-superseded) ballots.",
                              "Verification FAILED - dropped ballot.",
                              "Please raise this with the Admin."};
       tetrisui_message("Verification failed", lines, 4);

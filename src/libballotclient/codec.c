@@ -22,6 +22,9 @@ static const struct {
     {BCL_JOIN, "JOIN"},       {BCL_CAST, "CAST"},     {BCL_UPDATE, "UPDATE"},
     {BCL_RESULTS, "RESULTS"}, {BCL_CHECK, "CHECK"},   {BCL_CREATE, "CREATE"},
     {BCL_OPEN, "OPEN"},       {BCL_CLOSE, "CLOSE"},   {BCL_PUBLISH, "PUBLISH"},
+    {BCL_ADMIN_RESULTS, "ADMIN_RESULTS"},
+    {BCL_ADMIN_CHECK, "ADMIN_CHECK"},
+    {BCL_ADMIN_NEXT_ID, "ADMIN_NEXT_ID"},
 };
 #define N_OPS (sizeof(OP_NAMES) / sizeof(OP_NAMES[0]))
 
@@ -50,6 +53,7 @@ static const struct {
     {BB_ERR_CONFIG_TITLE, "BB_ERR_CONFIG_TITLE"},
     {BB_ERR_CONFIG_OPTIONS, "BB_ERR_CONFIG_OPTIONS"},
     {BB_ERR_CONFIG_TIME, "BB_ERR_CONFIG_TIME"},
+    {BB_ERR_CONFIG_ID_TAKEN, "BB_ERR_CONFIG_ID_TAKEN"},
     {BB_ERR_ILLEGAL_TRANSITION, "BB_ERR_ILLEGAL_TRANSITION"},
     {BB_ERR_NOT_OPEN, "BB_ERR_NOT_OPEN"},
     {BB_ERR_CLOSED, "BB_ERR_CLOSED"},
@@ -202,13 +206,16 @@ static int path_election_id(const char *path, char out[BB_ID_LEN]) {
 
 typedef struct {
   bb_config_t *cfg;
+  char *id; /* req->election_id: the desired-id override, "" if omitted */
   int opt_i;
   int elig_i;
 } create_ctx_t;
 
 static void create_kv(const char *k, const char *v, void *ctxp) {
   create_ctx_t *c = ctxp;
-  if (strcmp(k, "title") == 0) {
+  if (strcmp(k, "election_id") == 0) {
+    snprintf(c->id, BB_ID_LEN, "%s", v);
+  } else if (strcmp(k, "title") == 0) {
     snprintf(c->cfg->title, BB_TITLE_LEN, "%s", v);
   } else if (strcmp(k, "open_time") == 0) {
     snprintf(c->cfg->open_time, BB_TIME_LEN, "%s", v);
@@ -260,6 +267,8 @@ int bcl_encode_request(const bcl_request_t *req, uint8_t *out, uint32_t *out_len
   switch (req->op) {
     case BCL_CREATE:
       snprintf(path, sizeof path, "/election");
+      if (req->election_id[0])
+        if (body_append(body, sizeof body, &off, "election_id=%s\n", req->election_id)) return -1;
       if (body_append(body, sizeof body, &off, "title=%s\n", req->config.title)) return -1;
       if (body_append(body, sizeof body, &off, "open_time=%s\n", req->config.open_time)) return -1;
       if (body_append(body, sizeof body, &off, "close_time=%s\n", req->config.close_time)) return -1;
@@ -274,6 +283,7 @@ int bcl_encode_request(const bcl_request_t *req, uint8_t *out, uint32_t *out_len
     case BCL_PUBLISH:
     case BCL_JOIN:
     case BCL_RESULTS:
+    case BCL_ADMIN_RESULTS:
       snprintf(path, sizeof path, "/election/%s", req->election_id);
       break;
 
@@ -289,8 +299,13 @@ int bcl_encode_request(const bcl_request_t *req, uint8_t *out, uint32_t *out_len
       break;
 
     case BCL_CHECK:
+    case BCL_ADMIN_CHECK:
       snprintf(path, sizeof path, "/election/%s/check", req->election_id);
       if (body_append(body, sizeof body, &off, "hash=%s\n", req->hash)) return -1;
+      break;
+
+    case BCL_ADMIN_NEXT_ID:
+      snprintf(path, sizeof path, "/election/next-id");
       break;
 
     default:
@@ -326,18 +341,22 @@ int bcl_decode_request(const htttp_request_t *http, bcl_request_t *req) {
 
   switch (op) {
     case BCL_CREATE: {
-      create_ctx_t c = {&req->config, 0, 0};
+      create_ctx_t c = {&req->config, req->election_id, 0, 0};
       body_for_each(http->body, http->body_len, create_kv, &c);
       req->config.option_count = c.opt_i;
       req->config.eligible_count = c.elig_i;
       return 0;
     }
 
+    case BCL_ADMIN_NEXT_ID:
+      return 0;
+
     case BCL_OPEN:
     case BCL_CLOSE:
     case BCL_PUBLISH:
     case BCL_JOIN:
     case BCL_RESULTS:
+    case BCL_ADMIN_RESULTS:
       return path_election_id(http->path, req->election_id);
 
     case BCL_CAST:
@@ -350,6 +369,7 @@ int bcl_decode_request(const htttp_request_t *http, bcl_request_t *req) {
     }
 
     case BCL_CHECK:
+    case BCL_ADMIN_CHECK:
       if (path_election_id(http->path, req->election_id) != 0) return -1;
       body_for_each(http->body, http->body_len, hash_kv, req->hash);
       return req->hash[0] != '\0' ? 0 : -1;
@@ -383,6 +403,7 @@ int bcl_http_status(bb_result_t status) {
     case BB_ERR_NOT_PUBLISHED:
     case BB_ERR_REPLAY:
     case BB_ERR_NOT_JOINED:
+    case BB_ERR_CONFIG_ID_TAKEN:
       return 409;
     case BB_ERR_DB:
     case BB_ERR_NOT_IMPLEMENTED:
@@ -395,16 +416,17 @@ int bcl_http_status(bb_result_t status) {
 }
 
 /* Response body per op, after the shared "status=" line:
- *   CREATE            election_id=
+ *   CREATE/ADMIN_NEXT_ID election_id=
  *   OPEN/CLOSE/PUBLISH (nothing else)
  *   JOIN               election_id=, title=, state=, open_time=, close_time=,
  *                       option= (repeated) - never the eligible list
  *   CAST/UPDATE        hash=, issued_at=
- *   RESULTS            tally_count=, tally=<csv>, hash_count=,
+ *   RESULTS/ADMIN_RESULTS tally_count=, tally=<csv>, hash_count=,
  *                       row=<hash>,<option_index>,<version>,<superseded> (repeated)
- *   CHECK              found=, found_option= (only when found)
+ *   CHECK/ADMIN_CHECK  found=, found_option=, found_option_name= (only when found)
  * Every field is emitted only when it has content, so a failed request's
- * response is just the status= line. */
+ * response is just the status= line. CREATE's request body also carries an
+ * optional election_id= (the operator's desired id; blank auto-allocates). */
 int bcl_encode_response(bcl_op_t op, const bcl_response_t *resp, uint8_t *out,
                         uint32_t *out_len) {
   if (!resp || !out || !out_len) return -1;
@@ -419,6 +441,7 @@ int bcl_encode_response(bcl_op_t op, const bcl_response_t *resp, uint8_t *out,
 
   switch (op) {
     case BCL_CREATE:
+    case BCL_ADMIN_NEXT_ID:
       if (resp->election.id[0])
         if (body_append(body, sizeof body, &off, "election_id=%s\n", resp->election.id))
           return -1;
@@ -453,6 +476,7 @@ int bcl_encode_response(bcl_op_t op, const bcl_response_t *resp, uint8_t *out,
       break;
 
     case BCL_RESULTS:
+    case BCL_ADMIN_RESULTS:
       if (body_append(body, sizeof body, &off, "tally_count=%d\n", resp->option_count))
         return -1;
       if (resp->option_count > 0) {
@@ -478,10 +502,15 @@ int bcl_encode_response(bcl_op_t op, const bcl_response_t *resp, uint8_t *out,
       break;
 
     case BCL_CHECK:
+    case BCL_ADMIN_CHECK:
       if (body_append(body, sizeof body, &off, "found=%d\n", resp->found)) return -1;
-      if (resp->found)
+      if (resp->found) {
         if (body_append(body, sizeof body, &off, "found_option=%d\n", resp->found_option))
           return -1;
+        if (body_append(body, sizeof body, &off, "found_option_name=%s\n",
+                        resp->found_option_name))
+          return -1;
+      }
       break;
 
     default:
@@ -567,6 +596,8 @@ static void response_kv(const char *k, const char *v, void *ctxp) {
     r->found = atoi(v);
   } else if (strcmp(k, "found_option") == 0) {
     r->found_option = atoi(v);
+  } else if (strcmp(k, "found_option_name") == 0) {
+    snprintf(r->found_option_name, BB_OPTION_LEN, "%s", v);
   }
 }
 

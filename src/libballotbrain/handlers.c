@@ -33,7 +33,8 @@ static bb_result_t load_election(bb_ctx *ctx, const char *election_id, bb_electi
 
 /* ---- UC-1 -------------------------------------------------------------- */
 
-bb_result_t bb_create_election(bb_ctx *ctx, const bb_config_t *config, char out_id[BB_ID_LEN]) {
+bb_result_t bb_create_election(bb_ctx *ctx, const bb_config_t *config, const char *desired_id,
+                               char out_id[BB_ID_LEN]) {
   bb_result_t vr = bb_validate_config(config);
   if (vr != BB_OK) {
     bb_log(ctx, "[create] rejected config (err=%d)", vr);
@@ -41,7 +42,20 @@ bb_result_t bb_create_election(bb_ctx *ctx, const bb_config_t *config, char out_
   }
 
   char id[BB_ID_LEN];
-  bb_alloc_id(ctx, id);
+  if (desired_id != NULL && desired_id[0] != '\0') {
+    bb_election_t existing;
+    bb_result_t er = load_election(ctx, desired_id, &existing);
+    if (er == BB_OK) {
+      bb_log(ctx, "[create] rejected: id '%s' already exists", desired_id);
+      return BB_ERR_CONFIG_ID_TAKEN;
+    }
+    if (er != BB_ERR_NOT_FOUND) {
+      return er;
+    }
+    snprintf(id, BB_ID_LEN, "%s", desired_id);
+  } else {
+    bb_alloc_id(ctx, id);
+  }
 
   bb_db_cmd_t cmd = {0};
   cmd.op = BB_DB_INSERT_ELECTION;
@@ -100,6 +114,14 @@ bb_result_t bb_join(bb_ctx *ctx, const char *election_id, const char *cert_name,
   }
 
   if (!bb_check_eligibility(&election, cert_name)) {
+    /* Brackets rather than quotes: makes stray leading/trailing whitespace in
+     * either the presented cert or a stored eligible entry visible in the
+     * log line, since strcmp (bb_check_eligibility) does not trim either. */
+    bb_log(ctx, "[join] '%s': cert [%s] not on the %d-entry eligible list", election_id, cert_name,
+          election.eligible_count);
+    for (int i = 0; i < election.eligible_count; i++) {
+      bb_log(ctx, "[join]   eligible[%d] = [%s]", i, election.eligible[i]);
+    }
     return BB_ERR_NOT_ELIGIBLE;
   }
 
@@ -138,6 +160,11 @@ static bb_result_t record_ballot_locked(bb_ctx *ctx, const char *election_id,
 
   /* Eligibility is re-checked at record time, never trusted from join. */
   if (!bb_check_eligibility(&election, ballot->cert_name)) {
+    bb_log(ctx, "[cast] '%s': cert [%s] not on the %d-entry eligible list", election_id,
+          ballot->cert_name, election.eligible_count);
+    for (int i = 0; i < election.eligible_count; i++) {
+      bb_log(ctx, "[cast]   eligible[%d] = [%s]", i, election.eligible[i]);
+    }
     return BB_ERR_NOT_ELIGIBLE;
   }
 
@@ -214,12 +241,36 @@ static bb_result_t record_ballot_locked(bb_ctx *ctx, const char *election_id,
     }
   }
 
+  /* Point the voter's current-ballot record at the new hash/version - the
+   * private mapping GET_PRIOR_BALLOT reads back next time. Identity-carrying,
+   * so it is its own op (BB_DB_SET_OWNER), never folded into APPEND_BALLOT:
+   * that keeps the identity-free ballot row identity-free at the type level,
+   * not just by convention (R2). */
+  bb_db_cmd_t owner = {0};
+  owner.op = BB_DB_SET_OWNER;
+  snprintf(owner.election_id, BB_ID_LEN, "%s", election_id);
+  snprintf(owner.cert_name, BB_CERT_LEN, "%s", ballot->cert_name);
+  snprintf(owner.hash, BB_HASH_LEN, "%s", out->hash);
+  owner.version = version;
+  bb_result_t owner_r = db_exec(ctx, &owner, NULL);
+  if (owner_r != BB_OK) {
+    return owner_r;
+  }
+
   bb_db_cmd_t consume = {0};
   consume.op = BB_DB_NONCE_MARK;
   snprintf(consume.election_id, BB_ID_LEN, "%s", election_id);
   snprintf(consume.nonce, BB_NONCE_LEN, "%s", ballot->nonce);
   return db_exec(ctx, &consume, NULL);
 }
+
+/* How many times to redo the whole read-check-write transaction on
+ * <<END retry>> (a deadlock victim, not an error - db/docs/
+ * c-daemon-integration.md invariant 3). Matches libtetrisauth's
+ * account.c::TXN_ATTEMPTS; BallotBox's admin_thread serializes every call
+ * into this function already, so a real deadlock here would mean SimpleDB is
+ * shared with another writer, not a bug in this daemon. */
+#define BB_TXN_ATTEMPTS 3
 
 bb_result_t bb_record_ballot(bb_ctx *ctx, const char *election_id, const bb_ballot_t *ballot,
                              bb_receipt_t *out) {
@@ -228,9 +279,40 @@ bb_result_t bb_record_ballot(bb_ctx *ctx, const char *election_id, const bb_ball
   }
 
   /* Read-check-write on the ballot store must be atomic per voter, or two
-   * concurrent submissions can both see "no prior ballot" (R1). */
+   * concurrent submissions can both see "no prior ballot" (R1). Now backed by
+   * a real SimpleDB transaction (bb_db_begin/commit/rollback): every db_exec
+   * call inside record_ballot_locked reuses the one connection this opens, so
+   * a crash or a failed gate mid-sequence leaves no partial ballot. On
+   * <<END retry>> the WHOLE transaction is redone, never just the statement
+   * that reported it - an aborted transaction takes every earlier write in it
+   * down too. */
   bb_write_lock(ctx);
-  bb_result_t r = record_ballot_locked(ctx, election_id, ballot, out);
+
+  bb_result_t r = BB_ERR_DB;
+  for (int attempt = 0; attempt < BB_TXN_ATTEMPTS; attempt++) {
+    bb_result_t br = bb_db_begin(ctx);
+    if (br != BB_OK) {
+      r = br;
+      break;
+    }
+
+    r = record_ballot_locked(ctx, election_id, ballot, out);
+    if (r == BB_ERR_RETRY) {
+      bb_db_rollback(ctx);
+      continue;
+    }
+    if (r != BB_OK) {
+      bb_db_rollback(ctx);
+      break;
+    }
+
+    r = bb_db_commit(ctx);
+    if (r == BB_ERR_RETRY) {
+      continue; /* lost the deadlock at commit time; redo everything */
+    }
+    break;
+  }
+
   bb_write_unlock(ctx);
   return r;
 }
@@ -244,6 +326,45 @@ bb_result_t bb_publish_results(bb_ctx *ctx, const char *election_id) {
   /* Publishing is a lifecycle transition like any other: CLOSED -> PUBLISHED,
    * with the current state read back from the store. */
   return bb_transition_state(ctx, election_id, BB_STATE_PUBLISHED);
+}
+
+/* Shared by bb_get_results and bb_get_results_admin: both gate on PUBLISHED
+ * first (checked by each caller before this runs), then read the same tally
+ * and hash rows the same way. The only difference between the two public
+ * entry points is whether an eligible-voter check also runs first. */
+static bb_result_t fetch_results(bb_ctx *ctx, const char *election_id,
+                                 const bb_election_t *election, bb_results_t *out) {
+  bb_db_cmd_t tally = {0};
+  tally.op = BB_DB_GET_TALLY;
+  snprintf(tally.election_id, BB_ID_LEN, "%s", election_id);
+  bb_db_result_t tally_res;
+  memset(&tally_res, 0, sizeof(tally_res));
+  bb_result_t tr = db_exec(ctx, &tally, &tally_res);
+  if (tr != BB_OK) {
+    return tr;
+  }
+
+  bb_db_cmd_t hashes = {0};
+  hashes.op = BB_DB_GET_HASHES;
+  snprintf(hashes.election_id, BB_ID_LEN, "%s", election_id);
+  bb_db_result_t hash_res;
+  memset(&hash_res, 0, sizeof(hash_res));
+  bb_result_t hr = db_exec(ctx, &hashes, &hash_res);
+  if (hr != BB_OK) {
+    return hr;
+  }
+
+  memset(out, 0, sizeof(*out));
+  out->option_count = election->option_count;
+  for (int i = 0; i < election->option_count && i < BB_MAX_OPTIONS; i++) {
+    out->tally[i] = tally_res.tally[i];
+    snprintf(out->options[i], BB_OPTION_LEN, "%s", election->options[i]);
+  }
+  out->hash_count = hash_res.hash_count < BB_MAX_VOTERS ? hash_res.hash_count : BB_MAX_VOTERS;
+  for (int i = 0; i < out->hash_count; i++) {
+    out->hashes[i] = hash_res.hashes[i];
+  }
+  return BB_OK;
 }
 
 bb_result_t bb_get_results(bb_ctx *ctx, const char *election_id, const char *cert_name,
@@ -267,45 +388,63 @@ bb_result_t bb_get_results(bb_ctx *ctx, const char *election_id, const char *cer
     return BB_ERR_NOT_ELIGIBLE;
   }
 
-  bb_db_cmd_t tally = {0};
-  tally.op = BB_DB_GET_TALLY;
-  snprintf(tally.election_id, BB_ID_LEN, "%s", election_id);
-  bb_db_result_t tally_res;
-  memset(&tally_res, 0, sizeof(tally_res));
-  bb_result_t tr = db_exec(ctx, &tally, &tally_res);
-  if (tr != BB_OK) {
-    return tr;
+  return fetch_results(ctx, election_id, &election, out);
+}
+
+/* Admin channel only (see ballotd/control_plane.c's class check): the
+ * operator who ran an election is not necessarily on its own eligible-voter
+ * list, so this deliberately skips bb_check_eligibility - reachability over
+ * the local admin Unix socket is the authority here, same as CREATE/OPEN/
+ * CLOSE/PUBLISH. The PUBLISHED gate still applies unchanged: a result is
+ * not readable by anyone, admin included, before publish. */
+bb_result_t bb_get_results_admin(bb_ctx *ctx, const char *election_id, bb_results_t *out) {
+  if (election_id == NULL || out == NULL) {
+    return BB_ERR_DB;
   }
 
-  bb_db_cmd_t hashes = {0};
-  hashes.op = BB_DB_GET_HASHES;
-  snprintf(hashes.election_id, BB_ID_LEN, "%s", election_id);
-  bb_db_result_t hash_res;
-  memset(&hash_res, 0, sizeof(hash_res));
-  bb_result_t hr = db_exec(ctx, &hashes, &hash_res);
-  if (hr != BB_OK) {
-    return hr;
+  bb_election_t election;
+  bb_result_t r = load_election(ctx, election_id, &election);
+  if (r != BB_OK) {
+    return r;
+  }
+  if (election.state != BB_STATE_PUBLISHED) {
+    return BB_ERR_NOT_PUBLISHED;
   }
 
-  memset(out, 0, sizeof(*out));
-  out->option_count = election.option_count;
-  for (int i = 0; i < election.option_count && i < BB_MAX_OPTIONS; i++) {
-    out->tally[i] = tally_res.tally[i];
-    snprintf(out->options[i], BB_OPTION_LEN, "%s", election.options[i]);
-  }
-  out->hash_count = hash_res.hash_count < BB_MAX_VOTERS ? hash_res.hash_count : BB_MAX_VOTERS;
-  for (int i = 0; i < out->hash_count; i++) {
-    out->hashes[i] = hash_res.hashes[i];
-  }
-  return BB_OK;
+  return fetch_results(ctx, election_id, &election, out);
 }
 
 /* ---- UC-6 -------------------------------------------------------------- */
 
+/*
+ * Look up a receipt hash. Deliberately ungated on election state - unlike
+ * fetch_results (UC-5), which reveals an aggregate (the whole tally) and
+ * stays PUBLISHED-only for every caller, this answers a question only the
+ * hash's own holder can even ask: a hash is a secret returned to exactly
+ * one caller by bb_issue_receipt, and FIND_HASH's row carries no identity
+ * (R2), so "is this specific ballot of mine live" leaks nothing about any
+ * OTHER ballot regardless of when it runs. Earlier this stayed PUBLISHED
+ * -gated on the voter channel and ungated only for admin
+ * (bb_lookup_hash_admin, since removed) - two copies of one read for a
+ * distinction that was UX preference, not a secrecy boundary, so it
+ * collapsed into this single function once the voter side dropped the
+ * gate too. Both BCL_CHECK and BCL_ADMIN_CHECK call this; what differs
+ * between them is only which transport can reach ballotd at all
+ * (ballotctl has no voter session to gate anyway - see control_plane.c),
+ * not what the answer is.
+ */
 bb_result_t bb_lookup_hash(bb_ctx *ctx, const char *election_id, const char *hash,
-                           bb_ballot_hash_t *out) {
+                           bb_ballot_hash_t *out, char option_name[BB_OPTION_LEN]) {
   if (election_id == NULL || hash == NULL) {
     return BB_ERR_DB;
+  }
+
+  /* Still needed unconditionally: BB_ERR_NOT_FOUND for an unknown election,
+   * and election.options[] to resolve option_name below. */
+  bb_election_t election;
+  bb_result_t er = load_election(ctx, election_id, &election);
+  if (er != BB_OK) {
+    return er;
   }
 
   bb_db_cmd_t find = {0};
@@ -327,6 +466,14 @@ bb_result_t bb_lookup_hash(bb_ctx *ctx, const char *election_id, const char *has
   }
   if (out != NULL) {
     *out = res.row;
+  }
+  if (option_name != NULL) {
+    int idx = res.row.option_index;
+    if (idx >= 0 && idx < election.option_count) {
+      snprintf(option_name, BB_OPTION_LEN, "%s", election.options[idx]);
+    } else {
+      option_name[0] = '\0';
+    }
   }
   return BB_OK;
 }

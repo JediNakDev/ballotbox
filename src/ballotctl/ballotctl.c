@@ -58,6 +58,8 @@ static const char *result_text(bb_result_t rc) {
       return "Config invalid: at least two options are required.";
     case BB_ERR_CONFIG_TIME:
       return "Config invalid: close time must be after open time.";
+    case BB_ERR_CONFIG_ID_TAKEN:
+      return "That election ID is already in use - pick another.";
     case BB_ERR_ILLEGAL_TRANSITION:
       return "Not a legal transition from the election's current state.";
     case BB_ERR_NOT_FOUND:
@@ -91,6 +93,17 @@ static int ctl_reachable(const char *path) {
   return ok;
 }
 
+/* Same reasoning as split_csv above: identity comparisons are byte-exact,
+ * so a stray space typed here must not be the reason a later comparison
+ * (e.g. eligibility, if this cert is ever also a voter) fails. */
+static void trim_inplace(char *s) {
+  size_t start = 0;
+  while (s[start] == ' ') start++;
+  size_t len = strlen(s + start);
+  memmove(s, s + start, len + 1);
+  while (len > 0 && s[len - 1] == ' ') s[--len] = '\0';
+}
+
 static int screen_login(void) {
   for (;;) {
     char name[BB_CERT_LEN] = "";
@@ -98,6 +111,7 @@ static int screen_login(void) {
                        sizeof(name)) != 0) {
       return 0;
     }
+    trim_inplace(name);
     if (strlen(name) == 0) continue;
 
     const char *steps[] = {"Contacting ballotd admin socket"};
@@ -123,6 +137,12 @@ static int screen_login(void) {
 
 /* ---- helpers -------------------------------------------------------------- */
 
+/* Eligibility and every other identity comparison in this system (bb_join,
+ * bb_record_ballot, ...) is a byte-exact strcmp with no normalisation - a
+ * stray space typed on either side of a comma here silently produces a cert
+ * name that can never match what a voter types at login (#seen in testing:
+ * "Kenji , Pop, Jedi" stored "Kenji " as the first eligible entry). Trimmed
+ * on both ends so the field's own formatting habits cannot cause that. */
 static void split_csv(const char *src, char out[][BB_OPTION_LEN], int max, int *count) {
   *count = 0;
   char buf[256];
@@ -130,6 +150,8 @@ static void split_csv(const char *src, char out[][BB_OPTION_LEN], int max, int *
   char *tok = strtok(buf, ",");
   while (tok != NULL && *count < max) {
     while (*tok == ' ') tok++;
+    size_t len = strlen(tok);
+    while (len > 0 && tok[len - 1] == ' ') tok[--len] = '\0';
     snprintf(out[*count], BB_OPTION_LEN, "%s", tok);
     (*count)++;
     tok = strtok(NULL, ",");
@@ -145,20 +167,39 @@ static int prompt_election_id(const char *title, char out[BB_ID_LEN]) {
 /* ---- UC-1: create ----------------------------------------------------------- */
 
 void screen_create_election(void) {
-  char values[5][TETRISUI_FIELD_LEN] = {"", "", "", "2026-01-01T09:00:00Z", "2026-01-08T09:00:00Z"};
-  const char *labels[5] = {"Title", "Options (comma-separated)",
-                           "Eligible voter certs (comma-separated)", "Open time", "Close time"};
+  char values[6][TETRISUI_FIELD_LEN] = {"", "", "", "", "2026-01-01T09:00:00Z",
+                                        "2026-01-08T09:00:00Z"};
+  const char *labels[6] = {"Title",
+                           "Election ID",
+                           "Options (comma-separated)",
+                           "Eligible voter certs (comma-separated)",
+                           "Open time",
+                           "Close time"};
+
+  /* Pre-fill with what CREATE would auto-allocate if left as-is (a plain
+   * peek, BCL_ADMIN_NEXT_ID - reserves nothing), so the operator sees a
+   * usable default and can edit it instead of typing one from scratch. A
+   * failure here just leaves the field blank - CREATE still auto-allocates
+   * server-side in that case, same as before this field existed. */
+  bcl_request_t peek;
+  memset(&peek, 0, sizeof(peek));
+  peek.op = BCL_ADMIN_NEXT_ID;
+  bcl_response_t peek_resp;
+  memset(&peek_resp, 0, sizeof(peek_resp));
+  if (bcl_send(g_ctx, &peek, &peek_resp) == BB_OK) {
+    snprintf(values[1], sizeof(values[1]), "%s", peek_resp.election.id);
+  }
 
   for (;;) {
-    if (tetrisui_form("Create election (UC-1)", labels, values, 5) != 0) return; /* cancelled */
+    if (tetrisui_form("Create election (UC-1)", labels, values, 6) != 0) return; /* cancelled */
 
     bb_config_t config;
     memset(&config, 0, sizeof(config));
     snprintf(config.title, BB_TITLE_LEN, "%s", values[0]);
-    split_csv(values[1], config.options, BB_MAX_OPTIONS, &config.option_count);
-    split_csv(values[2], config.eligible, BB_MAX_VOTERS, &config.eligible_count);
-    snprintf(config.open_time, BB_TIME_LEN, "%s", values[3]);
-    snprintf(config.close_time, BB_TIME_LEN, "%s", values[4]);
+    split_csv(values[2], config.options, BB_MAX_OPTIONS, &config.option_count);
+    split_csv(values[3], config.eligible, BB_MAX_VOTERS, &config.eligible_count);
+    snprintf(config.open_time, BB_TIME_LEN, "%s", values[4]);
+    snprintf(config.close_time, BB_TIME_LEN, "%s", values[5]);
 
     bcl_request_t req;
     bb_result_t vr = bc_build_create(&config, &req);
@@ -167,6 +208,7 @@ void screen_create_election(void) {
       tetrisui_message("Rejected (alt flow 4a)", lines, 2);
       continue;
     }
+    snprintf(req.election_id, BB_ID_LEN, "%s", values[1]);
     snprintf(req.cert_name, BB_CERT_LEN, "%s", g_cert_name);
 
     const char *steps[] = {"Sending to ballotd"};
@@ -237,9 +279,8 @@ void screen_view_results(void) {
 
   bcl_request_t req;
   memset(&req, 0, sizeof(req));
-  req.op = BCL_RESULTS;
+  req.op = BCL_ADMIN_RESULTS;
   snprintf(req.election_id, BB_ID_LEN, "%s", id);
-  snprintf(req.cert_name, BB_CERT_LEN, "%s", g_cert_name);
 
   bcl_response_t resp;
   memset(&resp, 0, sizeof(resp));
@@ -303,6 +344,53 @@ void screen_view_results(void) {
   tetrisui_list_view("Election results", lines, n);
 }
 
+/* ---- UC-6: check a ballot (admin) -------------------------------------------- */
+
+/* Admin-channel path to the same check ballotu.c's "Check your vote" does
+ * (BCL_ADMIN_CHECK, same bb_lookup_hash underneath - see dispatch.c), for
+ * an operator with no voter session to route plain CHECK through. Still
+ * needs the exact receipt hash; this cannot enumerate or count anyone's
+ * ballot without it. */
+void screen_check_ballot(void) {
+  char id[BB_ID_LEN];
+  if (prompt_election_id("Check a ballot (UC-6)", id) != 0) return;
+
+  char hash[BB_HASH_LEN] = "";
+  if (tetrisui_input("Check a ballot (UC-6)", "Enter the receipt hash:", hash, sizeof(hash)) != 0)
+    return;
+  if (strlen(hash) == 0) return;
+
+  bcl_request_t req;
+  memset(&req, 0, sizeof(req));
+  req.op = BCL_ADMIN_CHECK;
+  snprintf(req.election_id, BB_ID_LEN, "%s", id);
+  snprintf(req.hash, BB_HASH_LEN, "%s", hash);
+
+  bcl_response_t resp;
+  memset(&resp, 0, sizeof(resp));
+  bb_result_t rc = bcl_send(g_ctx, &req, &resp);
+  bb_result_t status = (rc != BB_OK) ? rc : resp.status;
+
+  char line1[96];
+  snprintf(line1, sizeof(line1), "Receipt hash: %s", hash);
+
+  if (status == BB_OK && resp.found) {
+    char line2[96];
+    snprintf(line2, sizeof(line2), "Found: counted for option index %d (%s).", resp.found_option,
+            resp.found_option_name);
+    const char *lines[] = {line1, line2};
+    tetrisui_message("Verified", lines, 2);
+    return;
+  }
+  if (status == BB_ERR_NOT_FOUND) {
+    const char *lines[] = {line1, "Not found: no live (non-superseded) ballot with this hash."};
+    tetrisui_message("Not found", lines, 2);
+    return;
+  }
+  const char *lines[] = {line1, result_text(status)};
+  tetrisui_message("Check unavailable", lines, 2);
+}
+
 /* ---- entry point ------------------------------------------------------------ */
 
 static void usage(FILE *out, const char *argv0) {
@@ -342,10 +430,11 @@ int main(int argc, char **argv) {
 
   if (screen_login()) {
     const char *items[] = {"Create election (UC-1)", "Open election", "Close election",
-                           "Publish results", "View results (UC-5)", "Quit"};
+                           "Publish results", "View results (UC-5)", "Check a ballot (UC-6)",
+                           "Quit"};
     for (;;) {
-      int sel = tetrisui_menu("ballotctl - admin menu", items, 6, NULL);
-      if (sel < 0 || sel == 5) break;
+      int sel = tetrisui_menu("ballotctl - admin menu", items, 7, NULL);
+      if (sel < 0 || sel == 6) break;
       switch (sel) {
         case 0:
           screen_create_election();
@@ -361,6 +450,9 @@ int main(int argc, char **argv) {
           break;
         case 4:
           screen_view_results();
+          break;
+        case 5:
+          screen_check_ballot();
           break;
       }
     }

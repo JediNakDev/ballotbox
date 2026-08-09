@@ -1,7 +1,15 @@
 CC      := cc
 CFLAGS  := -Wall -Wextra -Werror=unused-result -O2 -Iinclude
 LDFLAGS := -Llib
-LDLIBS  := -ltetrisauth -ltetrissh -lhtttp -lballotclient -lballotbrain -ltetrisdb -lcommon -lssl -lcrypto -lpthread
+# --start-group/--end-group: static archives resolve left-to-right and ld
+# does not re-scan one it already finished with, so any ordering of our own
+# archives here is fragile the moment one of them calls into another (e.g.
+# libballotclient's transport.c calling into libtetrissh - see git history,
+# this line has been "fixed" by reordering twice already). The group makes
+# ld keep re-scanning these until nothing new resolves, so their order here
+# stops being load-bearing. System libs (ssl/crypto/pthread) stay outside:
+# nothing in the group calls back into them in a cycle that needs it.
+LDLIBS  := -Wl,--start-group -ltetrisauth -ltetrissh -lhtttp -lballotclient -lballotbrain -ltetrisdb -lcommon -Wl,--end-group -lssl -lcrypto -lpthread
 OPENSSL := $(shell brew --prefix openssl)
 CFLAGS  += -I$(OPENSSL)/include
 LDFLAGS += -L$(OPENSSL)/lib
@@ -36,7 +44,7 @@ TETRISH_LIB_SRCS := $(wildcard src/tetrish/lib/*.c)
 SYSPROG_SRCS     := $(wildcard src/tetrish/system_programs/*.c)
 SYSPROG_BINS     := $(SYSPROG_SRCS:src/tetrish/system_programs/%.c=$(BIN_DIR)/%)
 
-BINS := tetrish $(BIN_DIR)/ballotd $(BIN_DIR)/tetrislogd $(BIN_DIR)/tetrisdb $(BIN_DIR)/ballotctl $(BIN_DIR)/ballotu $(SYSPROG_BINS)
+BINS := tetrish $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(BIN_DIR)/tetrislogd $(BIN_DIR)/tetrisdb $(BIN_DIR)/ballotctl $(BIN_DIR)/ballotu $(SYSPROG_BINS)
 
 .PHONY: all clean dirs
 all: dirs $(LIBS) $(BINS)
@@ -150,12 +158,17 @@ TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR) -Itests/unit/support
 # no-dependency stub) that drags libtetrissh in too. A test that defines its
 # own bcl_send (fake_client_seams.h) keeps transport.o itself out, but these
 # libs still need to be on the link line for the tests that do not.
-# Each test defines the seams it wants to substitute; because the libraries are
-# static archives, a seam defined in the test keeps the real member out of the
-# binary (see tests/unit/support/fake_*_seams.h).
-TEST_LDLIBS := -L$(LIB_DIR) -lballotclient -lballotbrain -lhtttp -ltetrissh -lssl -lcrypto -lpthread
+# -ltetrisdb: bb_alloc_id (ballotbrain.c, always linked - bb_create/bb_destroy
+# live there too) calls tdb_socket_* directly. No test needs to fake it (it
+# degrades to a fixed id when unreachable), but the symbols still need to
+# resolve.
+# --start-group: same archive-ordering fragility as the top-level LDLIBS -
+# see that comment. Each test defines the seams it wants to substitute;
+# because the libraries are static archives, a seam defined in the test keeps
+# the real member out of the binary (see tests/unit/support/fake_*_seams.h).
+TEST_LDLIBS := -L$(LIB_DIR) -Wl,--start-group -lballotclient -lballotbrain -lhtttp -ltetrissh -ltetrisdb -Wl,--end-group -lssl -lcrypto -lpthread
 
-$(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libtetrissh.a $(HEADERS)
+$(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libtetrisdb.a $(HEADERS)
 	$(CC) $(TEST_CFLAGS) $< $(UNITY_DIR)/unity.c -o $@ $(TEST_LDLIBS)
 
 # test_db is not a Unity test: it brings its own harness and lives in tests/
@@ -187,20 +200,20 @@ $(BIN_DIR)/test_logd: tests/test_logd.c $(LIB_DIR)/libcommon.a $(BIN_DIR)/tetris
 # prerequisites rather than just runtime assumptions (same story as
 # test_logd needing bin/tetrislogd). Needs libtetrissh/libhtttp/libballot*
 # directly for the client-side handshake and codec calls the test makes.
-$(BIN_DIR)/test_ballotd: tests/test_ballotd.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
-	$(CC) $(CFLAGS) tests/test_ballotd.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -lssl -lcrypto -lpthread
+$(BIN_DIR)/test_ballotd: tests/test_ballotd.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libcommon.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
+	$(CC) $(CFLAGS) tests/test_ballotd.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -lcommon -lssl -lcrypto -lpthread
 
 # Real-process E2E for the client side of the same picture: drives the real
 # bcl_connect/bu_join/bcl_send (src/libballotclient/transport.c) - the same
 # calls ballotu.c makes - against a real bin/ballotd, rather than a
 # hand-rolled socket harness like test_ballotd.c's.
-$(BIN_DIR)/test_client_transport: tests/test_client_transport.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
-	$(CC) $(CFLAGS) tests/test_client_transport.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -lssl -lcrypto -lpthread
+$(BIN_DIR)/test_client_transport: tests/test_client_transport.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libcommon.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
+	$(CC) $(CFLAGS) tests/test_client_transport.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -lcommon -lssl -lcrypto -lpthread
 
 .PHONY: test
-test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd $(BIN_DIR)/test_auth $(BIN_DIR)/test_jwt $(BIN_DIR)/test_rc $(BIN_DIR)/test_tetrisdb
+test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd $(BIN_DIR)/test_auth $(BIN_DIR)/test_jwt $(BIN_DIR)/test_rc $(BIN_DIR)/test_tetrisdb $(BIN_DIR)/test_ballotd $(BIN_DIR)/test_client_transport
 	@fail=0; \
-	for t in $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd $(BIN_DIR)/test_rc $(BIN_DIR)/test_tetrisdb $(BIN_DIR)/test_jwt $(BIN_DIR)/test_auth; do \
+	for t in $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd $(BIN_DIR)/test_rc $(BIN_DIR)/test_tetrisdb $(BIN_DIR)/test_jwt $(BIN_DIR)/test_auth $(BIN_DIR)/test_ballotd $(BIN_DIR)/test_client_transport; do \
 	  echo "== $$t =="; \
 	  $$t || fail=1; \
 	done; \

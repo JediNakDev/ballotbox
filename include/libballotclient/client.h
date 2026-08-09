@@ -37,7 +37,10 @@ typedef enum {
   BCL_CREATE,   /* admin: UC-1 create */
   BCL_OPEN,     /* admin: UC-1 open */
   BCL_CLOSE,    /* admin: close */
-  BCL_PUBLISH   /* admin: publish */
+  BCL_PUBLISH,  /* admin: publish */
+  BCL_ADMIN_RESULTS, /* admin: UC-5 results, no eligible-list check - see bb_get_results_admin */
+  BCL_ADMIN_CHECK,   /* admin: UC-6 check via the admin socket - see bb_lookup_hash */
+  BCL_ADMIN_NEXT_ID  /* admin: UC-1 peek - what CREATE would auto-allocate, no side effect */
 } bcl_op_t;
 
 /* One request. Only the fields relevant to `op` are populated. */
@@ -67,6 +70,7 @@ typedef struct {
   int hash_count;
   int found;                            /* CHECK: 1 if hash counted */
   int found_option;                     /* CHECK: revealed only to the key holder */
+  char found_option_name[BB_OPTION_LEN]; /* CHECK: found_option's display text */
 } bcl_response_t;
 
 /*
