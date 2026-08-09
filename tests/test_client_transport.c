@@ -25,6 +25,7 @@
 #include "libballotbrain/db.h"
 #include "libballotclient/voter.h"
 #include "libtetrisdb/schema.h"
+#include "libtetrisdb/socket/conf.h"
 #include "libtetrisdb/socket/runner.h"
 
 #define BALLOTD_BIN "bin/ballotd"
@@ -32,13 +33,22 @@
 #define CTL_PATH "var/run/test_client_transport.ctl"
 #define CA_PATH "auth/cacsertificate.crt"
 #define HOST "127.0.0.1"
+#define TEST_PASSWORD "correcthorsebatterystaple"
 
-/* Same isolation reasoning as test_ballotd.c: never touch the shared var/db
- * defaults, and give the DB-unreachable tests a socket nothing binds. */
+/* UNREACH_*: a sandbox of this file's own, same isolation reasoning as
+ * test_ballotd.c - a socket nothing binds, for tests that want a
+ * deterministic "the store is unreachable" outcome.
+ *
+ * LIVE_*: NOT a sandbox, unlike UNREACH_* - the shared project default
+ * (var/db, var/run/tetrisdb.sock). See test_ballotd.c's LIVE_DB_DIR comment
+ * for why: every voter-channel op now goes through tauth_login() first,
+ * which reads db_ipc/db_dir from .tetrishrc with no override this file can
+ * reach, so the live-store tests use the same runner auth is already
+ * committed to rather than sandbox ballotd's own tables away from it. */
 #define UNREACH_DB_DIR "var/db/test_client_transport_unreachable"
 #define UNREACH_DB_SOCK "var/run/test_client_transport_unreachable.sock"
-#define LIVE_DB_DIR "var/db/test_client_transport_live"
-#define LIVE_DB_SOCK "var/run/test_client_transport_live.sock"
+#define LIVE_DB_DIR TDB_DEFAULT_DIR
+#define LIVE_DB_SOCK TDB_DEFAULT_IPC
 #define TEST_JAR "db/dist/simpledb.jar"
 
 static int tests_run = 0, tests_failed = 0;
@@ -112,6 +122,19 @@ static int stop_ballotd(pid_t pid) {
   return WEXITSTATUS(status);
 }
 
+/* Logs in as `user` over ctx's already-open voter session (bcl_connect),
+ * registering first if no such account exists yet - idempotent across
+ * repeated `make test` runs against the same shared var/db (see
+ * LIVE_DB_DIR's comment above). Every JOIN/CAST/UPDATE/RESULTS/CHECK is
+ * unreachable until this succeeds - ballotd/session.c calls tauth_login()
+ * before dispatching anything. */
+static int voter_login_or_register(bcl_ctx *ctx, const char *user) {
+  int status = 0;
+  if (bcl_auth(ctx, "LOGIN", user, TEST_PASSWORD, &status) == 0 && status == 200) return 0;
+  if (status != 404) return -1;
+  return bcl_auth(ctx, "REGISTER", user, TEST_PASSWORD, &status) == 0 && status == 200 ? 0 : -1;
+}
+
 /* ---- tests ------------------------------------------------------------- */
 
 static int test_connect_succeeds(void) {
@@ -142,62 +165,19 @@ static int test_connect_fails_when_daemon_down(void) {
   return 0;
 }
 
-/* Proves the full real round trip (connect, encode, session_send,
- * session_recv, decode, classify) end to end. With the store unreachable,
- * db_exec's connect failure (BB_ERR_DB) falls into bu_classify_join's
- * default case, same as any other transport-level failure, so the outcome
- * is TIMEOUT - see test_join_admitted_via_live_store below for the
- * reachable-store path all the way to BU_JOIN_ADMITTED. */
-static int test_bu_join_round_trips_through_real_daemon(void) {
-  pid_t pid = start_ballotd();
-  CHECK(pid > 0, "daemon did not start");
-
-  bcl_ctx *ctx = bcl_create();
-  CHECK(ctx != NULL, "bcl_create failed");
-  CHECK(bcl_connect(ctx, HOST, TEST_PORT, CA_PATH) == BB_OK, "bcl_connect failed");
-
-  bu_session_t session;
-  memset(&session, 0, sizeof(session));
-  bu_join_outcome_t outcome = bu_join(ctx, &session, "E-100", "alice");
-
-  CHECK(outcome == BU_JOIN_TIMEOUT, "expected TIMEOUT (store unreachable)");
-  CHECK(session.joined == 0, "session must not be joined on this outcome");
-
-  bcl_disconnect(ctx);
-  bcl_destroy(ctx);
-  CHECK(stop_ballotd(pid) == 0, "daemon exited non-zero");
-  return 0;
-}
-
-/* Same proof, but through bcl_send directly (RESULTS has no bu_* wrapper,
- * so ballotu.c calls bcl_send itself - this exercises that exact path).
- * Store unreachable: db_exec's connect failure comes back as BB_ERR_DB. */
-static int test_bcl_send_results_round_trips(void) {
-  pid_t pid = start_ballotd();
-  CHECK(pid > 0, "daemon did not start");
-
-  bcl_ctx *ctx = bcl_create();
-  CHECK(ctx != NULL, "bcl_create failed");
-  CHECK(bcl_connect(ctx, HOST, TEST_PORT, CA_PATH) == BB_OK, "bcl_connect failed");
-
-  bcl_request_t req;
-  memset(&req, 0, sizeof(req));
-  req.op = BCL_RESULTS;
-  snprintf(req.election_id, BB_ID_LEN, "E-042");
-  snprintf(req.cert_name, BB_CERT_LEN, "alice");
-
-  bcl_response_t resp;
-  memset(&resp, 0, sizeof(resp));
-  bb_result_t rc = bcl_send(ctx, &req, &resp);
-
-  CHECK(rc == BB_ERR_DB, "RESULTS with no reachable store must fail cleanly");
-  CHECK(resp.status == BB_ERR_DB, "resp.status should match rc on a real round trip");
-
-  bcl_disconnect(ctx);
-  bcl_destroy(ctx);
-  CHECK(stop_ballotd(pid) == 0, "daemon exited non-zero");
-  return 0;
-}
+/* There is deliberately no "JOIN/RESULTS/bcl_auth fails cleanly with no
+ * reachable store" case here anymore (this file used to have two: a
+ * bu_join-shaped one and a bcl_send(RESULTS)-shaped one). Every voter op is
+ * unreachable pre-auth now, and unlike ballotd's own db_exec calls,
+ * libtetrisauth's tauth_login() does not honour this file's -d/-i sandbox
+ * at all - it reads db_ipc/db_dir from .tetrishrc unconditionally (see
+ * LIVE_DB_DIR's comment above), which in practice means auth's reachability
+ * here tracks whatever the AMBIENT shared runner's state happens to be,
+ * not anything UNREACH_DB_SOCK controls. That makes "no reachable store"
+ * an assertion this file cannot reliably force anymore, so there is nothing
+ * trustworthy left to check - see test_bcl_send_admin_op_without_ctl_path_
+ * configured below and test_ballotd.c's admin-channel cases for BB_ERR_DB
+ * propagation still covered elsewhere. */
 
 static bcl_request_t make_create_request(const char *title) {
   bcl_request_t req;
@@ -296,6 +276,7 @@ static int test_join_admitted_via_live_store(void) {
   bcl_ctx *voter = bcl_create();
   CHECK(voter != NULL, "bcl_create failed");
   CHECK(bcl_connect(voter, HOST, TEST_PORT, CA_PATH) == BB_OK, "bcl_connect failed");
+  CHECK(voter_login_or_register(voter, "alice") == 0, "auth as alice failed");
 
   bu_session_t session;
   memset(&session, 0, sizeof session);
@@ -307,6 +288,129 @@ static int test_join_admitted_via_live_store(void) {
 
   bcl_disconnect(voter);
   bcl_destroy(voter);
+  CHECK(stop_ballotd(pid) == 0, "daemon exited non-zero");
+  return 0;
+}
+
+/* Regression (reported live): log in, join, cast a vote, then act out
+ * "close ballotu and reopen it" - a fresh bcl_ctx and a fresh, zeroed
+ * bu_session_t, exactly what a new process has - log in again and JOIN the
+ * same election again. Before the has_prior_ballot/prior_ballot_version
+ * fix (bb_join, handlers.c; bu_join, voter.c), the fresh session had no way
+ * to know this cert already had a ballot, so bu_route_vote always chose
+ * BU_CAST and a returning voter's next vote silently overwrote their
+ * receipt instead of superseding it. This drives the real daemon and the
+ * real client library end to end, the same calls ballotu.c makes. */
+static int test_rejoin_after_cast_reports_prior_ballot(void) {
+  pid_t pid = start_ballotd_live();
+  CHECK(pid > 0, "daemon did not start");
+
+  bcl_ctx *actl = bcl_create();
+  CHECK(actl != NULL, "bcl_create failed");
+  bcl_set_ctl_path(actl, CTL_PATH);
+
+  bcl_request_t creq = make_create_request("Rejoin Regression");
+  snprintf(creq.config.eligible[0], BB_CERT_LEN, "alice");
+  creq.config.eligible_count = 1;
+  bcl_response_t cresp;
+  memset(&cresp, 0, sizeof cresp);
+  CHECK(bcl_send(actl, &creq, &cresp) == BB_OK, "CREATE should succeed");
+
+  bcl_request_t oreq;
+  memset(&oreq, 0, sizeof oreq);
+  oreq.op = BCL_OPEN;
+  snprintf(oreq.election_id, BB_ID_LEN, "%s", cresp.election.id);
+  snprintf(oreq.cert_name, BB_CERT_LEN, "admin");
+  bcl_response_t oresp;
+  memset(&oresp, 0, sizeof oresp);
+  CHECK(bcl_send(actl, &oreq, &oresp) == BB_OK, "OPEN should succeed");
+  bcl_destroy(actl);
+
+  /* First "session": join fresh (no prior ballot yet) and cast. */
+  bcl_ctx *voter1 = bcl_create();
+  CHECK(voter1 != NULL, "bcl_create failed");
+  CHECK(bcl_connect(voter1, HOST, TEST_PORT, CA_PATH) == BB_OK, "bcl_connect failed");
+  CHECK(voter_login_or_register(voter1, "alice") == 0, "auth as alice failed");
+
+  bu_session_t session1;
+  memset(&session1, 0, sizeof session1);
+  CHECK(bu_join(voter1, &session1, cresp.election.id, "alice") == BU_JOIN_ADMITTED,
+        "first join should be admitted");
+  CHECK(session1.has_ballot == 0, "a fresh election has no prior ballot yet");
+
+  bb_receipt_t receipt;
+  memset(&receipt, 0, sizeof receipt);
+  CHECK(bu_submit_vote(voter1, &session1, 0, "nonce-regression-1", &receipt) == BB_OK,
+        "cast should succeed");
+
+  bcl_disconnect(voter1);
+  bcl_destroy(voter1);
+
+  /* "Close ballotu and reopen it": a brand new ctx, a brand new (zeroed)
+   * session - nothing carried over from session1 in memory. */
+  bcl_ctx *voter2 = bcl_create();
+  CHECK(voter2 != NULL, "bcl_create failed");
+  CHECK(bcl_connect(voter2, HOST, TEST_PORT, CA_PATH) == BB_OK, "bcl_connect failed");
+  CHECK(voter_login_or_register(voter2, "alice") == 0, "re-auth as alice failed");
+
+  bu_session_t session2;
+  memset(&session2, 0, sizeof session2);
+  CHECK(bu_join(voter2, &session2, cresp.election.id, "alice") == BU_JOIN_ADMITTED,
+        "rejoin should be admitted");
+
+  CHECK(session2.has_ballot == 1, "rejoin must report the prior ballot cast in session1");
+  CHECK(session2.ballot_version == 1, "prior ballot's version should be reported as 1");
+  CHECK(bu_route_vote(&session2) == BU_UPDATE,
+        "a rejoined voter with a prior ballot must route to update, not cast");
+
+  bcl_disconnect(voter2);
+  bcl_destroy(voter2);
+  CHECK(stop_ballotd(pid) == 0, "daemon exited non-zero");
+  return 0;
+}
+
+/* RESULTS (admin channel, which needs no eligible-list check) carries the
+ * election's title alongside the tally - dispatch.c's BCL_ADMIN_RESULTS
+ * case populates resp->election from the same fetch_results() the voter
+ * RESULTS path shares, so this covers both. */
+static int test_admin_results_include_title(void) {
+  pid_t pid = start_ballotd_live();
+  CHECK(pid > 0, "daemon did not start");
+
+  bcl_ctx *actl = bcl_create();
+  CHECK(actl != NULL, "bcl_create failed");
+  bcl_set_ctl_path(actl, CTL_PATH);
+
+  bcl_request_t creq = make_create_request("Wire Title Check");
+  bcl_response_t cresp;
+  memset(&cresp, 0, sizeof cresp);
+  CHECK(bcl_send(actl, &creq, &cresp) == BB_OK, "CREATE should succeed");
+
+  const bcl_op_t transitions[] = {BCL_OPEN, BCL_CLOSE, BCL_PUBLISH};
+  for (int i = 0; i < 3; i++) {
+    bcl_request_t treq;
+    memset(&treq, 0, sizeof treq);
+    treq.op = transitions[i];
+    snprintf(treq.election_id, BB_ID_LEN, "%s", cresp.election.id);
+    snprintf(treq.cert_name, BB_CERT_LEN, "admin");
+    bcl_response_t tresp;
+    memset(&tresp, 0, sizeof tresp);
+    CHECK(bcl_send(actl, &treq, &tresp) == BB_OK, "lifecycle transition should succeed");
+  }
+
+  bcl_request_t rreq;
+  memset(&rreq, 0, sizeof rreq);
+  rreq.op = BCL_ADMIN_RESULTS;
+  snprintf(rreq.election_id, BB_ID_LEN, "%s", cresp.election.id);
+  bcl_response_t rresp;
+  memset(&rresp, 0, sizeof rresp);
+  CHECK(bcl_send(actl, &rreq, &rresp) == BB_OK, "ADMIN_RESULTS should succeed");
+
+  CHECK(strcmp(rresp.election.id, cresp.election.id) == 0, "results should carry the election id");
+  CHECK(strcmp(rresp.election.title, "Wire Title Check") == 0,
+        "results should carry the election title");
+
+  bcl_destroy(actl);
   CHECK(stop_ballotd(pid) == 0, "daemon exited non-zero");
   return 0;
 }
@@ -380,16 +484,16 @@ static int have_java(void) {
   return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
-static pid_t g_runner = -1;
+/* No stop_runner(): unlike UNREACH_*'s fixtures, this file does not own the
+ * live runner's lifecycle - see LIVE_DB_DIR's comment above. It is the
+ * shared project runner, most likely already running, and there is nothing
+ * for this file to tear down afterward. */
 
-static void stop_runner(void) {
-  if (g_runner <= 0) return;
-  kill(g_runner, SIGTERM);
-  while (waitpid(g_runner, NULL, 0) < 0 && errno == EINTR);
-  g_runner = -1;
-  unlink(LIVE_DB_SOCK);
-}
-
+/* Provisions BallotBox's own 6 tables (bin/tetrisdb's own startup policy
+ * only provisions TETRISAUTH_DB_TABLE, "user"), then starts the shared
+ * runner exactly the way an operator would: `bin/tetrisdb start` is
+ * idempotent, so a runner already up is left alone rather than fought
+ * over. */
 static int start_live_runner(void) {
   if (tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_ELECTION, BB_DB_SCHEMA_ELECTION) != 0 ||
       tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_OPTION, BB_DB_SCHEMA_OPTION) != 0 ||
@@ -401,25 +505,24 @@ static int start_live_runner(void) {
     return -1;
   }
 
-  tdb_runner_opts_t opts;
-  tdb_runner_opts_default(&opts);
-  snprintf(opts.dir, sizeof opts.dir, "%s", LIVE_DB_DIR);
-  snprintf(opts.jar, sizeof opts.jar, "%s", TEST_JAR);
-  snprintf(opts.ipc, sizeof opts.ipc, "%s", LIVE_DB_SOCK);
-  opts.sessions = 8;
-  opts.recover = 0;
+  /* Exit code deliberately not treated as pass/fail: "already running" and
+   * "just started it" are both fine outcomes here, and the reachability
+   * poll below is the actual signal either way. */
+  int start_rc = system("./bin/tetrisdb start >/dev/null 2>&1");
+  (void)start_rc;
 
-  g_runner = tdb_runner_spawn(&opts, -1);
-  if (g_runner <= 0) {
-    fprintf(stderr, "test_client_transport: fixture: failed to spawn a runner\n");
-    return -1;
+  tdb_socket_opts_t sopts;
+  tdb_socket_opts_default(&sopts);
+  for (int i = 0; i < 100; i++) {
+    tdb_socket_t *probe = tdb_socket_open(&sopts);
+    if (probe != NULL) {
+      tdb_socket_close(probe);
+      return 0;
+    }
+    nap(100);
   }
-  if (tdb_runner_wait(LIVE_DB_SOCK, g_runner, 20000) != 0) {
-    fprintf(stderr, "test_client_transport: fixture: runner never accepted a connection\n");
-    stop_runner();
-    return -1;
-  }
-  return 0;
+  fprintf(stderr, "test_client_transport: fixture: shared runner never became reachable\n");
+  return -1;
 }
 
 /* ---- harness ------------------------------------------------------------- */
@@ -457,8 +560,6 @@ int main(void) {
   printf("client transport end-to-end tests\n");
   run("bcl_connect succeeds against a real ballotd", test_connect_succeeds);
   run("bcl_connect fails cleanly against a closed port", test_connect_fails_when_daemon_down);
-  run("bu_join round-trips through the real daemon", test_bu_join_round_trips_through_real_daemon);
-  run("bcl_send(RESULTS) round-trips through the real daemon", test_bcl_send_results_round_trips);
   run("bcl_send admin op fails cleanly with no ctl_path set",
       test_bcl_send_admin_op_without_ctl_path_configured);
   run("bcl_send(CREATE) via ctl: invalid config refused",
@@ -469,7 +570,10 @@ int main(void) {
     if (start_live_runner() == 0) {
       run("bcl_send(CREATE) via ctl succeeds (live store)", test_bcl_send_create_via_ctl_succeeds);
       run("bu_join admits an eligible voter (live store)", test_join_admitted_via_live_store);
-      stop_runner();
+      run("rejoin after cast reports prior ballot (live store)",
+          test_rejoin_after_cast_reports_prior_ballot);
+      run("ADMIN_RESULTS includes the election title (live store)",
+          test_admin_results_include_title);
     } else {
       tests_failed++;
     }

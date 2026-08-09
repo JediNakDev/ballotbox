@@ -51,7 +51,8 @@ bb_result_t ballotd_dispatch(bb_ctx *ctx, const bcl_request_t *req, bcl_response
       return resp->status;
 
     case BCL_JOIN:
-      resp->status = bb_join(ctx, req->election_id, req->cert_name, &resp->election);
+      resp->status = bb_join(ctx, req->election_id, req->cert_name, &resp->election,
+                             &resp->has_prior_ballot, &resp->prior_ballot_version);
       return resp->status;
 
     case BCL_CAST:
@@ -64,6 +65,8 @@ bb_result_t ballotd_dispatch(bb_ctx *ctx, const bcl_request_t *req, bcl_response
       memset(&results, 0, sizeof results);
       resp->status = bb_get_results(ctx, req->election_id, req->cert_name, &results);
       if (resp->status == BB_OK) {
+        snprintf(resp->election.id, BB_ID_LEN, "%s", req->election_id);
+        snprintf(resp->election.title, BB_TITLE_LEN, "%s", results.title);
         resp->option_count = results.option_count;
         memcpy(resp->tally, results.tally, sizeof resp->tally);
         memcpy(resp->options, results.options, sizeof resp->options);
@@ -81,6 +84,8 @@ bb_result_t ballotd_dispatch(bb_ctx *ctx, const bcl_request_t *req, bcl_response
       memset(&results, 0, sizeof results);
       resp->status = bb_get_results_admin(ctx, req->election_id, &results);
       if (resp->status == BB_OK) {
+        snprintf(resp->election.id, BB_ID_LEN, "%s", req->election_id);
+        snprintf(resp->election.title, BB_TITLE_LEN, "%s", results.title);
         resp->option_count = results.option_count;
         memcpy(resp->tally, results.tally, sizeof resp->tally);
         memcpy(resp->options, results.options, sizeof resp->options);

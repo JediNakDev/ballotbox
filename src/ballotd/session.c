@@ -22,7 +22,9 @@
 
 #include "ballotd/adminmsg.h"
 #include "libballotclient/codec.h"
+#include "libcommon/limits.h"
 #include "libhtttp/htttp.h"
+#include "libtetrisauth/tetrisauth.h"
 #include "libtetrissh/tetrissh.h"
 
 #include <openssl/pem.h>
@@ -70,8 +72,19 @@ static bool is_voter_op(bcl_op_t op) {
 
 /* One client request: decode, forward to admin_thread, wait for the reply,
  * encode, send. Strictly synchronous - one request in flight per
- * connection, so no poll() multiplexing is needed here. */
-static void handle_request(session_t *sh, int admin_fd, const uint8_t *buf, uint32_t len) {
+ * connection, so no poll() multiplexing is needed here.
+ *
+ * cert_name is this connection's tauth_login()-verified identity (session_main
+ * gets it once via tauth_name(), after the pre-auth exchange resolves and
+ * before this function is ever called). It overwrites whatever the request
+ * itself carries, rather than merely filling a blank field: bcl_decode_request
+ * still populates req->cert_name from the wire's Cert-Name header, but that
+ * header is client-asserted and unverified, and a JOIN/CAST/etc. deciding
+ * eligibility or ownership from an unverified name would make the
+ * authentication step above completely decorative. This is what actually
+ * closes that gap, not the header. */
+static void handle_request(session_t *sh, int admin_fd, const char *cert_name,
+                           const uint8_t *buf, uint32_t len) {
   htttp_request_t http;
   if (htttp_parse_request(buf, len, &http) != HTTTP_OK) {
     session_reply_raw(sh, 400);
@@ -93,6 +106,9 @@ static void handle_request(session_t *sh, int admin_fd, const uint8_t *buf, uint
     session_reply_raw(sh, 400);
     return;
   }
+
+  snprintf(creq.req.cert_name, sizeof creq.req.cert_name, "%s", cert_name);
+  snprintf(creq.req.ballot.cert_name, sizeof creq.req.ballot.cert_name, "%s", cert_name);
 
   BallotdResp cresp;
   if (ballotmsg_write_req(admin_fd, &creq) != 0) return; /* admin gone: no reply, disconnect */
@@ -121,13 +137,28 @@ static void session_main(int client_fd, int admin_fd, const char *cert_path,
 
   if (hs != SESSION_OK) return;
 
+  /* The pre-auth exchange, owned end to end by libtetrisauth (unmodified -
+   * same library tetriSH's own session.c calls). Blocks until the client is
+   * a real account; there is no guest path here; every BallotBox voter op
+   * needs a cert_name it can check eligibility against, so "accepted as
+   * anonymous" is not a state this daemon has any use for. Nothing below
+   * this line may run until it returns TAUTH_OK - that return is the proof
+   * of authentication, not a flag anywhere on this connection. */
+  if (tauth_login(&sh) != TAUTH_OK) {
+    session_close(&sh);
+    return;
+  }
+
+  char cert_name[MAX_PLAYER_NAME];
+  tauth_name(cert_name, sizeof cert_name);
+
   uint8_t buf[SESSION_MAX_FRAME];
   while (true) {
     uint32_t len = sizeof buf;
     int rc = session_recv(&sh, buf, &len);
 
     if (rc == SESSION_OK) {
-      handle_request(&sh, admin_fd, buf, len);
+      handle_request(&sh, admin_fd, cert_name, buf, len);
     } else if (rc == SESSION_ERR_IO || rc == SESSION_ERR_TOOBIG) {
       break; /* client closed, or the stream desynced */
     }

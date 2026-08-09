@@ -86,9 +86,17 @@ int bb_check_eligibility(const bb_election_t *election, const char *cert_name);
  * election config is copied to `out` (may be NULL). Refusals are specific:
  * BB_ERR_NOT_FOUND, BB_ERR_CERT_INVALID / BB_ERR_CERT_EXPIRED,
  * BB_ERR_NOT_ELIGIBLE, BB_ERR_NOT_OPEN.
+ *
+ * On BB_OK, if out_has_ballot and/or out_ballot_version are non-NULL (either
+ * may be NULL independently), they are filled from the store's
+ * GET_PRIOR_BALLOT record for this cert - the same lookup bb_record_ballot
+ * uses to pick cast vs. update - so a caller whose own session state does
+ * not remember a prior vote (a new process, or a fresh JOIN mid-session)
+ * can still route correctly instead of treating a returning voter as
+ * casting for the first time.
  */
 bb_result_t bb_join(bb_ctx *ctx, const char *election_id, const char *cert_name,
-                    bb_election_t *out);
+                    bb_election_t *out, int *out_has_ballot, int *out_ballot_version);
 
 /* ---- UC-3 / UC-4: cast & update --------------------------------------- */
 

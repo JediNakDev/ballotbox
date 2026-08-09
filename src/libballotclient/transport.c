@@ -6,8 +6,11 @@
 #include "libhtttp/htttp.h"
 #include "libtetrissh/tetrissh.h"
 
+#include <openssl/crypto.h>
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -101,6 +104,70 @@ void bcl_disconnect(bcl_ctx *ctx) {
   }
   free(t);
   ctx->transport = NULL;
+}
+
+int bcl_auth(bcl_ctx *ctx, const char *method, const char *username, const char *password,
+             int *out_status) {
+  if (ctx == NULL || ctx->transport == NULL || method == NULL || username == NULL ||
+      password == NULL || out_status == NULL) {
+    return -1;
+  }
+  bcl_transport_t *t = ctx->transport;
+  if (!t->connected) {
+    return -1;
+  }
+
+  /* "username\npassword", matching credential.c's cred_split (splits at the
+   * first LF only, so the password is unconstrained - only the username has
+   * to avoid one). One stack buffer, scrubbed on every exit below, same
+   * discipline tauth.c's own credential_flow keeps server-side. */
+  char body[256];
+  int blen = snprintf(body, sizeof body, "%s\n%s", username, password);
+  int ret = -1;
+  if (blen < 0 || (size_t)blen >= sizeof body) {
+    goto out;
+  }
+
+  htttp_request_t req;
+  memset(&req, 0, sizeof req);
+  if (snprintf(req.method, sizeof req.method, "%s", method) >= (int)sizeof req.method) {
+    goto out;
+  }
+  snprintf(req.path, sizeof req.path, "/");
+  req.body = (const uint8_t *)body;
+  req.body_len = (uint32_t)blen;
+
+  uint8_t wire[SESSION_MAX_FRAME];
+  uint32_t wlen = sizeof wire;
+  if (htttp_serialize_request(&req, wire, &wlen) != HTTTP_OK) {
+    goto out;
+  }
+
+  if (session_send(&t->session, wire, wlen) != SESSION_OK) {
+    t->connected = 0;
+    goto out;
+  }
+
+  uint8_t rbuf[SESSION_MAX_FRAME];
+  uint32_t rlen = sizeof rbuf;
+  int rc = session_recv(&t->session, rbuf, &rlen);
+  if (rc != SESSION_OK) {
+    if (rc == SESSION_ERR_IO || rc == SESSION_ERR_TOOBIG) {
+      t->connected = 0;
+    }
+    goto out;
+  }
+
+  htttp_response_t resp;
+  if (htttp_parse_response(rbuf, rlen, &resp) != HTTTP_OK) {
+    goto out;
+  }
+  *out_status = resp.status;
+  ret = 0;
+
+out:
+  OPENSSL_cleanse(body, sizeof body);
+  return ret;
 }
 
 void bcl_set_ctl_path(bcl_ctx *ctx, const char *path) {

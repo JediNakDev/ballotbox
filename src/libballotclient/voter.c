@@ -96,6 +96,14 @@ bu_join_outcome_t bu_join(bcl_ctx *ctx, bu_session_t *session, const char *elect
       snprintf(session->title, BB_TITLE_LEN, "%s", resp.election.title);
       session->option_count = resp.election.option_count;
       memcpy(session->options, resp.election.options, sizeof(session->options));
+      /* Without this, has_ballot/ballot_version stayed at the memset's zero
+       * regardless of the server's own record - a rejoin (new process, or
+       * Join picked again mid-session) always looked like a first-time
+       * voter, silently routing UC-3 (cast) over an existing ballot instead
+       * of UC-4 (update). The server now reports this from the same
+       * GET_PRIOR_BALLOT record bu_route_vote's decision depends on. */
+      session->has_ballot = resp.has_prior_ballot;
+      session->ballot_version = resp.prior_ballot_version;
       break;
     case BU_JOIN_NOT_OPEN:
       /* UC-2 alt flow 4a: the election is real, so it is remembered locally for

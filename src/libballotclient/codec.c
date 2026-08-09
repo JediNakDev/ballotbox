@@ -458,7 +458,10 @@ int bcl_encode_response(bcl_op_t op, const bcl_response_t *resp, uint8_t *out,
             body_append(body, sizeof body, &off, "title=%s\n", resp->election.title) ||
             body_append(body, sizeof body, &off, "state=%s\n", bb_state_str(resp->election.state)) ||
             body_append(body, sizeof body, &off, "open_time=%s\n", resp->election.open_time) ||
-            body_append(body, sizeof body, &off, "close_time=%s\n", resp->election.close_time))
+            body_append(body, sizeof body, &off, "close_time=%s\n", resp->election.close_time) ||
+            body_append(body, sizeof body, &off, "has_prior_ballot=%d\n", resp->has_prior_ballot) ||
+            body_append(body, sizeof body, &off, "prior_ballot_version=%d\n",
+                        resp->prior_ballot_version))
           return -1;
         for (int i = 0; i < resp->election.option_count; i++)
           if (body_append(body, sizeof body, &off, "option=%s\n", resp->election.options[i]))
@@ -477,6 +480,13 @@ int bcl_encode_response(bcl_op_t op, const bcl_response_t *resp, uint8_t *out,
 
     case BCL_RESULTS:
     case BCL_ADMIN_RESULTS:
+      /* Reuses JOIN's "election_id"/"title" keys - response_kv() below
+       * writes both into r->election regardless of which op produced them,
+       * so a results screen can show the title next to the id, not just
+       * the id the caller already typed in. */
+      if (body_append(body, sizeof body, &off, "election_id=%s\n", resp->election.id) ||
+          body_append(body, sizeof body, &off, "title=%s\n", resp->election.title))
+        return -1;
       if (body_append(body, sizeof body, &off, "tally_count=%d\n", resp->option_count))
         return -1;
       if (resp->option_count > 0) {
@@ -556,6 +566,10 @@ static void response_kv(const char *k, const char *v, void *ctxp) {
     snprintf(r->election.open_time, BB_TIME_LEN, "%s", v);
   } else if (strcmp(k, "close_time") == 0) {
     snprintf(r->election.close_time, BB_TIME_LEN, "%s", v);
+  } else if (strcmp(k, "has_prior_ballot") == 0) {
+    r->has_prior_ballot = atoi(v);
+  } else if (strcmp(k, "prior_ballot_version") == 0) {
+    r->prior_ballot_version = atoi(v);
   } else if (strcmp(k, "option") == 0) {
     if (r->election.option_count < BB_MAX_OPTIONS)
       snprintf(r->election.options[r->election.option_count++], BB_OPTION_LEN, "%s", v);

@@ -89,7 +89,7 @@ int bb_check_eligibility(const bb_election_t *election, const char *cert_name) {
 /* ---- UC-2 -------------------------------------------------------------- */
 
 bb_result_t bb_join(bb_ctx *ctx, const char *election_id, const char *cert_name,
-                    bb_election_t *out) {
+                    bb_election_t *out, int *out_has_ballot, int *out_ballot_version) {
   if (election_id == NULL || cert_name == NULL) {
     return BB_ERR_NOT_FOUND;
   }
@@ -132,6 +132,28 @@ bb_result_t bb_join(bb_ctx *ctx, const char *election_id, const char *cert_name,
 
   if (out != NULL) {
     *out = election;
+  }
+
+  /* A rejoin (new process, or just picking Join again mid-session) must not
+   * look like a first vote: the client's own session state is gone or was
+   * never populated, so whether this cert already has a ballot has to come
+   * from the store, the same GET_PRIOR_BALLOT record_ballot_locked already
+   * uses to decide cast vs. update server-side. Without this, a returning
+   * voter always saw BU_CAST and silently overwrote their receipt instead of
+   * being routed to Update Vote. */
+  if (out_has_ballot != NULL || out_ballot_version != NULL) {
+    bb_db_cmd_t prior = {0};
+    prior.op = BB_DB_GET_PRIOR_BALLOT;
+    snprintf(prior.election_id, BB_ID_LEN, "%s", election_id);
+    snprintf(prior.cert_name, BB_CERT_LEN, "%s", cert_name);
+    bb_db_result_t prior_res;
+    memset(&prior_res, 0, sizeof(prior_res));
+    bb_result_t pr = db_exec(ctx, &prior, &prior_res);
+    if (pr != BB_OK) {
+      return pr;
+    }
+    if (out_has_ballot != NULL) *out_has_ballot = prior_res.found;
+    if (out_ballot_version != NULL) *out_ballot_version = prior_res.found ? prior_res.row.version : 0;
   }
   return BB_OK;
 }
@@ -355,6 +377,7 @@ static bb_result_t fetch_results(bb_ctx *ctx, const char *election_id,
   }
 
   memset(out, 0, sizeof(*out));
+  snprintf(out->title, BB_TITLE_LEN, "%s", election->title);
   out->option_count = election->option_count;
   for (int i = 0; i < election->option_count && i < BB_MAX_OPTIONS; i++) {
     out->tally[i] = tally_res.tally[i];
