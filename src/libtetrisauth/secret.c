@@ -40,7 +40,7 @@
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
 
-#include "libcommon/logmsg.h"
+#include "libtetrisutil/logmsg.h"
 #include "libtetrisauth/provision.h"
 
 #define TAUTH_SECRET_REL    "auth/jwt_secret"

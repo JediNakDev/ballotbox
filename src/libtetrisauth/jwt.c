@@ -5,7 +5,7 @@
  * Contract, and the reasoning that produced it, in
  * include/libtetrisauth/jwt.h. Read that first; this file holds the how.
  *
- * THIS FILE MUST NOT INCLUDE ANYTHING FROM libtetrissh, libhtttp, libcommon OR
+ * THIS FILE MUST NOT INCLUDE ANYTHING FROM libtetrissh, libhtttp, libtetrisutil OR
  * libtetrisdb. Its only reason to exist as a separate pair is that it can be
  * copied into another tree and compile there against <openssl/hmac.h> and
  * <openssl/crypto.h> alone. bin/test_jwt links -lcrypto only, so breaking that

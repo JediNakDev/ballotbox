@@ -76,7 +76,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include "libcommon/sessionstate.h"
+#include "libtetrisutil/sessionstate.h"
 #include "libhtttp/htttp.h"
 #include "libtetrisauth/jwt.h"
 #include "libtetrisauth/provision.h"

@@ -2,7 +2,7 @@
  * daemonise.c - the double-fork detach, once.
  *
  * See tetrish/lib/daemonise.h for what the options mean and why this lives
- * here rather than in libcommon.
+ * here rather than in libtetrisutil.
  */
 
 #include "tetrish/lib/daemonise.h"

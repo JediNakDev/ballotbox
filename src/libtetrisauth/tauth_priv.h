@@ -98,7 +98,7 @@ int cred_split(const uint8_t *body, uint32_t body_len, cred_t *out);
 /**
  * Validates the username and folds it to lowercase into dst.
  *
- * The rule itself is libcommon/playername.h's, shared with the client's form
+ * The rule itself is libtetrisutil/playername.h's, shared with the client's form
  * validator. There is deliberately no truncation: two players could truncate
  * to the same roster name, so an over-long name is refused at REGISTER rather
  * than silently renamed here.

@@ -14,8 +14,8 @@
  */
 
 #include "../jvm.h"
-#include "libcommon/limits.h"
-#include "libcommon/rc.h"
+#include "libtetrisutil/limits.h"
+#include "libtetrisutil/rc.h"
 #include "libtetrisdb/schema.h"
 #include "libtetrisdb/socket/runner.h"
 

@@ -10,7 +10,7 @@
  * their own copy of it, which is how the same exit()/_exit() bug came to exist
  * in both and be fixed in one.
  *
- * It lives in tetrish/lib rather than libcommon because its callers are system
+ * It lives in tetrish/lib rather than libtetrisutil because its callers are system
  * programs, and the Makefile links those against tetrish/lib sources and no
  * libraries at all.
  *

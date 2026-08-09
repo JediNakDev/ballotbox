@@ -8,9 +8,9 @@
  * it from paths where a stall would be visible to a player.
  */
 
-#include "libcommon/logmsg.h"
+#include "libtetrisutil/logmsg.h"
 
-#include "libcommon/rc.h"
+#include "libtetrisutil/rc.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -39,7 +39,7 @@ static void apply_rc(const char *key, const char *value, void *ctx)
     long n = strtol(value, &end, 10);
     if (end == value || *end != '\0' || n < 1 || n > 1000) {
         fprintf(stderr,
-                "libcommon: rc: invalid log_send_attempts '%s', keeping %d\n",
+                "libtetrisutil: rc: invalid log_send_attempts '%s', keeping %d\n",
                 value, g_max_attempts);
         return;
     }

@@ -40,7 +40,7 @@ before renaming anything.
 - **`ballot*`** is this project only: `libballotbrain`, `libballotclient`,
   `ballotd`, `ballotctl`, `ballotu`.
   Nothing in tetriSH may depend on these.
-- **`libcommon`** is shared too, and predates the convention.
+- **`libtetrisutil`** is shared too, and predates the convention.
 
 So the direction of a rename is decided by ownership, not by which repository
 you happen to be sitting in.
@@ -52,8 +52,8 @@ comparable, and the next fix has to be ported by hand instead of copied.
 | Module | Interface | Depth |
 | --- | --- | --- |
 | `libtetrisdb` | 8 functions | deep |
-| `libcommon` logging | `log_open`, `log_send`, level parsing | deep |
-| `libcommon` rc | `rc_load`, `rc_classify_line` | deep |
+| `libtetrisutil` logging | `log_open`, `log_send`, level parsing | deep |
+| `libtetrisutil` rc | `rc_load`, `rc_classify_line` | deep |
 | `tetrislogd` | 4 functions | deep |
 | `libtetrisui` | 11 widgets | moderate |
 | `tetrish/lib` | `perms`, daemonising | moderate |
@@ -98,7 +98,7 @@ safe is after the handshake and before the worker starts.
 Rather than add a general query path that would be unsafe at any other time,
 the interface offers exactly one statement at exactly the moment it is sound.
 
-### libcommon rc - one grammar, two questions
+### libtetrisutil rc - one grammar, two questions
 
 `.tetrishrc` is read by three components: the shell, `rc_load`'s callers, and
 `tetrislogd`'s config overlay.
@@ -115,7 +115,7 @@ That is exactly the failure the deletion test predicts for a split like this:
 delete either module and the knowledge does not vanish, it reappears in the
 other one, slightly different.
 
-Both questions now sit behind `include/libcommon/rc.h`, sharing one definition
+Both questions now sit behind `include/libtetrisutil/rc.h`, sharing one definition
 of what a directive is.
 `rc_classify_line` answers the shell's question, `rc_load` answers the daemons'.
 The grammar is stated once.
@@ -146,8 +146,8 @@ linked with `src/tetrish/lib/*.c` and no libraries at all.
 That link rule is itself a seam: `tetrish/lib` is the only place shared code
 can live and still reach a system program.
 
-This is why daemonising lives there rather than in `libcommon`.
-`dspawn` and `dspawn2` are both system programs, so a `libcommon` home would
+This is why daemonising lives there rather than in `libtetrisutil`.
+`dspawn` and `dspawn2` are both system programs, so a `libtetrisutil` home would
 mean giving every trivial system program a library dependency it does not use.
 The dependency direction the Makefile already establishes decides where the
 code goes.
@@ -161,7 +161,7 @@ It is also the reason to keep only genuinely shared things here - anything with
 one caller belongs where that caller is.
 
 `rc_classify_line` moved the other way for the same reason read backwards: its
-only caller is the shell, which does link `libcommon`, so keeping it in
+only caller is the shell, which does link `libtetrisutil`, so keeping it in
 `tetrish/lib` bought nothing and cost a duplicated grammar.
 
 ### libtetrisui - moderate depth, and that is correct

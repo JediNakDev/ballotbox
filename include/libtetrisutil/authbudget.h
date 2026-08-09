@@ -1,5 +1,5 @@
-#ifndef LIBCOMMON_AUTHBUDGET_H
-#define LIBCOMMON_AUTHBUDGET_H
+#ifndef LIBTETRISUTIL_AUTHBUDGET_H
+#define LIBTETRISUTIL_AUTHBUDGET_H
 
 /**
  * @file authbudget.h
@@ -84,4 +84,4 @@ bool auth_budget_exhausted(const auth_budget_t *b, int cap);
  */
 bool auth_budget_hangup_is_cap(auth_budget_t *b);
 
-#endif /* LIBCOMMON_AUTHBUDGET_H */
+#endif /* LIBTETRISUTIL_AUTHBUDGET_H */

@@ -45,8 +45,8 @@
 
 #include <openssl/crypto.h>
 
-#include "libcommon/logmsg.h"
-#include "libcommon/rc.h"
+#include "libtetrisutil/logmsg.h"
+#include "libtetrisutil/rc.h"
 #include "libtetrisauth/config.h"
 #include "libtetrisauth/provision.h"
 #include "libtetrisdb/schema.h"

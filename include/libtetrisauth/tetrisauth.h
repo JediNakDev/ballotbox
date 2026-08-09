@@ -54,7 +54,7 @@
 
 #include "libhtttp/htttp.h"
 #include "libtetrissh/tetrissh.h"
-#include "libcommon/sessionstate.h"
+#include "libtetrisutil/sessionstate.h"
 
 /** tauth_login()'s two outcomes. An anonymous enum rather than a typedef: this
  * header exports three functions and no types, so nothing of ours can end up

@@ -1,13 +1,13 @@
 /**
  * @file authbudget.c
- * @brief The attempt rule. Contract in libcommon/authbudget.h.
+ * @brief The attempt rule. Contract in libtetrisutil/authbudget.h.
  *
  * The whole of #56 is the one predicate in counts(). Everything else here is
  * bookkeeping around it, and it is bookkeeping that used to live in five raw
  * struct fields on the client and two file-statics on the server.
  */
 
-#include "libcommon/authbudget.h"
+#include "libtetrisutil/authbudget.h"
 
 #include <string.h>
 

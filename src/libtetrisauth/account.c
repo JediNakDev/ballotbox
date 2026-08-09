@@ -37,8 +37,8 @@
 
 #include <openssl/crypto.h>
 
-#include "libcommon/limits.h"
-#include "libcommon/logmsg.h"
+#include "libtetrisutil/limits.h"
+#include "libtetrisutil/logmsg.h"
 #include "libtetrisauth/provision.h"
 #include "libtetrisdb/schema.h"
 #include "libtetrisdb/socket/db.h"

@@ -1,5 +1,5 @@
-#ifndef LIBCOMMON_LOGMSG_H
-#define LIBCOMMON_LOGMSG_H
+#ifndef LIBTETRISUTIL_LOGMSG_H
+#define LIBTETRISUTIL_LOGMSG_H
 
 /**
  * @file logmsg.h
@@ -71,7 +71,7 @@ int log_level_parse(const char *name, log_level_t *out);
  * a slow or wedged tetrislogd can never stall the caller - excess records are
  * dropped and counted instead (see log_dropped()).
  *
- * Also reads the log_send_attempts directive from RC_PATH (libcommon/rc.h) in
+ * Also reads the log_send_attempts directive from RC_PATH (libtetrisutil/rc.h) in
  * the current working directory, if present - see log_load_rc(). A process
  * that wants its rc file read from somewhere else should call log_load_rc()
  * itself afterwards; log_open() only ever consults the default location.
@@ -117,4 +117,4 @@ unsigned long log_dropped(void);
 /* Release the socket. Safe to call when never opened. */
 void log_close(void);
 
-#endif /* LIBCOMMON_LOGMSG_H */
+#endif /* LIBTETRISUTIL_LOGMSG_H */

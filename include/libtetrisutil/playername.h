@@ -1,5 +1,5 @@
-#ifndef LIBCOMMON_PLAYERNAME_H
-#define LIBCOMMON_PLAYERNAME_H
+#ifndef LIBTETRISUTIL_PLAYERNAME_H
+#define LIBTETRISUTIL_PLAYERNAME_H
 
 /**
  * @file playername.h
@@ -16,7 +16,7 @@
  * bin/test_jwt exists to enforce.
  */
 
-#include "libcommon/limits.h"
+#include "libtetrisutil/limits.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -65,4 +65,4 @@ bool player_name_ok(const char *s, size_t len);
  */
 int player_name_fold(char *dst, size_t cap, const char *s, size_t len);
 
-#endif /* LIBCOMMON_PLAYERNAME_H */
+#endif /* LIBTETRISUTIL_PLAYERNAME_H */

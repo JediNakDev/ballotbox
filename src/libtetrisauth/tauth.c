@@ -26,13 +26,13 @@
 
 #include <openssl/crypto.h>
 
-#include "libcommon/limits.h"
-#include "libcommon/logmsg.h"
+#include "libtetrisutil/limits.h"
+#include "libtetrisutil/logmsg.h"
 #include "libtetrisauth/jwt.h"
 #include "libtetrisauth/provision.h"
 #include "libtetrisauth/tetrisauth.h"
 
-#include "libcommon/authbudget.h"
+#include "libtetrisutil/authbudget.h"
 #include "tauth_priv.h"
 
 /* provision.h's upper bound on a usable secret. A local constant rather than
@@ -118,7 +118,7 @@ static void reply(int status, const char *body) {
  * honest: a 401 refusing a JOIN that arrived before the client authenticated
  * is a desync, not a wrong password, and spending an attempt on it would also
  * put this count out of step with the client's, which runs the same
- * libcommon/authbudget.h and reports the number to the user.
+ * libtetrisutil/authbudget.h and reports the number to the user.
  */
 static int counted(int status) {
   (void)auth_budget_reply(&g_budget, status);

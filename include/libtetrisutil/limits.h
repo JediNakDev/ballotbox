@@ -1,5 +1,5 @@
-#ifndef LIBCOMMON_LIMITS_H
-#define LIBCOMMON_LIMITS_H
+#ifndef LIBTETRISUTIL_LIMITS_H
+#define LIBTETRISUTIL_LIMITS_H
 
 /*
  * limits.h - every capacity in tetriSH, in one place.
@@ -10,7 +10,7 @@
  * and forced headers to include each other for nothing more than a number
  * (sessionstate.h needed the board header purely to learn how long a name is).
  *
- * Named libcommon/limits.h rather than limits.h: with -Iinclude, a bare
+ * Named libtetrisutil/limits.h rather than limits.h: with -Iinclude, a bare
  * include/limits.h would be found by #include <limits.h> and shadow the C
  * standard header, which tetrisd.c relies on for PATH_MAX.
  *
@@ -54,4 +54,4 @@
 /* Display name, including the terminating NUL. */
 #define MAX_PLAYER_NAME 16
 
-#endif /* LIBCOMMON_LIMITS_H */
+#endif /* LIBTETRISUTIL_LIMITS_H */

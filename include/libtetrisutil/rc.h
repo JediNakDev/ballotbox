@@ -1,5 +1,5 @@
-#ifndef LIBCOMMON_RC_H
-#define LIBCOMMON_RC_H
+#ifndef LIBTETRISUTIL_RC_H
+#define LIBTETRISUTIL_RC_H
 
 /**
  * @file rc.h
@@ -10,7 +10,7 @@
  * to run, with PATH= as its one special case. This one turns "key = value"
  * lines into calls to a callback and skips everything else - comments,
  * blank lines, PATH=, bare shell commands - so several independent readers
- * (tetrislogd's own options, libcommon's sender tuning, ...) can share one
+ * (tetrislogd's own options, libtetrisutil's sender tuning, ...) can share one
  * rc file without stepping on each other's directives or on the shell's.
  */
 
@@ -81,7 +81,7 @@ typedef struct {
   size_t max_len;    /**< RC_STR: longest accepted value; 0 means cap - 1. */
   rc_parse_fn parse; /**< RC_CUSTOM only. */
   /** Validate and store nothing, for a key this reader OWNS but does not
-   * consume: tetrislogd validates log_send_attempts though libcommon's sender
+   * consume: tetrislogd validates log_send_attempts though libtetrisutil's sender
    * reads it, and bin/tetrisdb validates db_timeout though bin/session reads
    * it. Both used to write that check into a local called `ignored`, which
    * reads like dead code and is the opposite. */
@@ -158,4 +158,4 @@ typedef enum {
  */
 rc_line_type_t rc_classify_line(const char *line, const char **value);
 
-#endif /* LIBCOMMON_RC_H */
+#endif /* LIBTETRISUTIL_RC_H */

@@ -21,7 +21,7 @@
 
 #include "tetrislogd/tetrislogd.h"
 
-#include "libcommon/rc.h"
+#include "libtetrisutil/rc.h"
 
 #include <signal.h>
 #include <limits.h>

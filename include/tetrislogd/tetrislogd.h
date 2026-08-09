@@ -11,12 +11,12 @@
  * only parses arguments and installs signal handlers keeps the receive path
  * testable without a process boundary.
  *
- * The wire format lives in libcommon/logmsg.h, shared with every sender.
+ * The wire format lives in libtetrisutil/logmsg.h, shared with every sender.
  */
 
 #include <limits.h>
 
-#include "libcommon/logmsg.h"
+#include "libtetrisutil/logmsg.h"
 #include "libtetrisdb/pipe/db.h"
 
 /* What the daemon was asked to do. Owned by main, borrowed by the sink.

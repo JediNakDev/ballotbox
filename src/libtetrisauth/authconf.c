@@ -6,7 +6,7 @@
  * tables in docs/libtetrisauth.md.
  *
  * The keys are declared as an rc_key_t table rather than parsed by hand:
- * libcommon/rc.h owns the whole-string strtol, the range check, the fixed-size
+ * libtetrisutil/rc.h owns the whole-string strtol, the range check, the fixed-size
  * copy and the "first bad value wins" report, which this file, tetrislogd and
  * libtetrisdb's runner each used to carry their own copy of.
  *
@@ -34,8 +34,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#include "libcommon/logmsg.h"
-#include "libcommon/rc.h"
+#include "libtetrisutil/logmsg.h"
+#include "libtetrisutil/rc.h"
 #include "libtetrisauth/config.h"
 #include "libtetrisdb/socket/conf.h"
 

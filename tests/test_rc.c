@@ -12,7 +12,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "libcommon/rc.h"
+#include "libtetrisutil/rc.h"
 #include "libtetrisauth/config.h"
 #include "libtetrisdb/socket/runner.h"
 #include "tetrislogd/tetrislogd.h"

@@ -1,12 +1,12 @@
 /*
- * playername.c - the player-name rule. Contract in libcommon/playername.h.
+ * playername.c - the player-name rule. Contract in libtetrisutil/playername.h.
  *
  * No ctype.h anywhere in here on purpose: isalnum() is locale-sensitive, and
  * the client's form validator used it, so a name the client accepted was not
  * always a name the server would.
  */
 
-#include "libcommon/playername.h"
+#include "libtetrisutil/playername.h"
 
 bool player_name_char_ok(unsigned char c) {
   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||

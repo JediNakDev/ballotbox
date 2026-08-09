@@ -1,4 +1,4 @@
-#include "libcommon/rc.h"
+#include "libtetrisutil/rc.h"
 #include "tetrish/shell.h"
 
 static int run_builtin(char **cmd) {

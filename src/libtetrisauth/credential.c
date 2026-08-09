@@ -26,8 +26,8 @@
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 
-#include "libcommon/limits.h"
-#include "libcommon/playername.h"
+#include "libtetrisutil/limits.h"
+#include "libtetrisutil/playername.h"
 
 #include "tauth_priv.h"
 
@@ -66,7 +66,7 @@ int cred_split(const uint8_t *body, uint32_t body_len, cred_t *out) {
 }
 
 int cred_name(const cred_t *c, char *dst, size_t cap) {
-  /* The allowlist, the length and the fold are libcommon/playername.h's, so
+  /* The allowlist, the length and the fold are libtetrisutil/playername.h's, so
    * this reader and the client's form validator cannot disagree about what a
    * legal name is. */
   return player_name_fold(dst, cap, c->user, c->user_len);

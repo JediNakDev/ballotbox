@@ -5,7 +5,7 @@
 
 #include "tetrislogd/tetrislogd.h"
 
-#include "libcommon/rc.h"
+#include "libtetrisutil/rc.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -26,7 +26,7 @@ const char *const logd_rc_keys[] = {
 };
 
 /* log_level's spelling is tetrislogd's own, so it comes through RC_CUSTOM
- * rather than being a type libcommon has to know about. */
+ * rather than being a type libtetrisutil has to know about. */
 static int parse_level(const char *value, void *field) {
   return log_level_parse(value, (log_level_t *)field);
 }
@@ -35,7 +35,7 @@ static int parse_level(const char *value, void *field) {
  * The complete log_ namespace, as a table.
  *
  * log_send_attempts is check_only: tetrislogd owns the namespace and refuses a
- * bad value, but the key is consumed by libcommon's sender, not by the daemon.
+ * bad value, but the key is consumed by libtetrisutil's sender, not by the daemon.
  */
 static const rc_key_t LOG_KEYS[] = {
     {.key = "log_path",

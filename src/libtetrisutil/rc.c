@@ -3,7 +3,7 @@
  * @brief Line-oriented key=value reader for .tetrishrc.
  */
 
-#include "libcommon/rc.h"
+#include "libtetrisutil/rc.h"
 
 #include <ctype.h>
 #include <limits.h>

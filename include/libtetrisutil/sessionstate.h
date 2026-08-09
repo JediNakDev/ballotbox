@@ -1,9 +1,9 @@
-#ifndef LIBCOMMON_SESSIONSTATE_H
-#define LIBCOMMON_SESSIONSTATE_H
+#ifndef LIBTETRISUTIL_SESSIONSTATE_H
+#define LIBTETRISUTIL_SESSIONSTATE_H
 
 #include <stdbool.h>
 
-#include "libcommon/limits.h"   /* MAX_PLAYER_NAME, MAX_STANDINGS */
+#include "libtetrisutil/limits.h"   /* MAX_PLAYER_NAME, MAX_STANDINGS */
 
 /* Where a client is in its lifecycle. */
 typedef enum {

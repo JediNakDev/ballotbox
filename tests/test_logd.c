@@ -1,6 +1,6 @@
 /* End-to-end tests for tetrislogd: the real binary, a real Unix datagram
  * socket, a real log file. Each test forks bin/tetrislogd as a child, sends
- * records through the public libcommon sender (exactly as tetrisd would),
+ * records through the public libtetrisutil sender (exactly as tetrisd would),
  * stops the daemon with SIGTERM, then inspects the file it wrote.
  *
  * Run from the repo root: make test */
@@ -17,7 +17,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "libcommon/logmsg.h"
+#include "libtetrisutil/logmsg.h"
 
 #define LOGD_BIN    "bin/tetrislogd"
 #define SOCK_PATH   "var/run/test_logd.sock"
@@ -144,7 +144,7 @@ static int stop_logd(pid_t pid)
     return WEXITSTATUS(status);
 }
 
-/* Send a raw buffer to the daemon, bypassing libcommon, to exercise the
+/* Send a raw buffer to the daemon, bypassing libtetrisutil, to exercise the
  * malformed-datagram path. Returns 0 if the datagram was accepted. */
 static int send_raw(const void *data, size_t len)
 {
