@@ -57,6 +57,7 @@ typedef enum {
   BB_ERR_CONFIG_TITLE,   /* empty title */
   BB_ERR_CONFIG_OPTIONS, /* fewer than 2 options */
   BB_ERR_CONFIG_TIME,    /* close time <= open time */
+  BB_ERR_CONFIG_ID_TAKEN, /* caller-supplied election id already exists */
 
   /* lifecycle */
   BB_ERR_ILLEGAL_TRANSITION, /* not a legal state edge */
@@ -82,7 +83,13 @@ typedef enum {
 
   /* infrastructure */
   BB_ERR_DB,             /* DB seam reported a failure */
-  BB_ERR_NOT_IMPLEMENTED /* deferred behind a stubbed seam (no readback yet) */
+  BB_ERR_NOT_IMPLEMENTED, /* deferred behind a stubbed seam (no readback yet) */
+  BB_ERR_RETRY /* internal: SimpleDB aborted a transaction to break a deadlock
+                * (<<END retry>>). Never returned across the daemon boundary -
+                * db.c's transaction wrapper retries the whole transaction
+                * itself and this code never escapes libballotbrain. Kept in
+                * the public enum (not a private one) only so bb_result_t
+                * stays the single vocabulary db_exec ever returns. */
 } bb_result_t;
 
 /* Configuration supplied by an admin to create an election (UC-1). */
@@ -135,8 +142,17 @@ typedef struct {
  * back it. Like bb_ballot_hash_t, it carries no voter identity.
  */
 typedef struct {
+  char title[BB_TITLE_LEN]; /* same free reuse of the already-loaded election
+                              * as options[] below - so a results screen can
+                              * show the title next to the id the caller
+                              * already typed, not just the id alone */
   int tally[BB_MAX_OPTIONS];
   int option_count;
+  char options[BB_MAX_OPTIONS][BB_OPTION_LEN]; /* names, parallel to tally[] -
+                                                 * bb_get_results already loads
+                                                 * the election to gate on
+                                                 * PUBLISHED/eligibility, so
+                                                 * this costs no extra read */
   bb_ballot_hash_t hashes[BB_MAX_VOTERS];
   int hash_count;
 } bb_results_t;

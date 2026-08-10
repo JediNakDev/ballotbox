@@ -1,13 +1,11 @@
 #include "libballotclient/client.h"
+#include "internal.h"
 
 #include <stdarg.h>
 #include <stdlib.h>
 
-/* Per-client context. Tiny today (log sink); later it owns the libtetrissh
- * session handle. Instance-scoped, no file-scope state. */
-struct bcl_ctx {
-  FILE *log;
-};
+/* struct bcl_ctx itself lives in internal.h, shared with transport.c.
+ * Instance-scoped, no file-scope state. */
 
 bcl_ctx *bcl_create(void) {
   bcl_ctx *ctx = calloc(1, sizeof(*ctx));
@@ -19,6 +17,12 @@ bcl_ctx *bcl_create(void) {
 }
 
 void bcl_destroy(bcl_ctx *ctx) {
+  /* Does NOT call bcl_disconnect(): that would pull transport.o into every
+   * binary that links libballotclient, including unit tests that define
+   * their own bcl_send precisely to keep transport.o's real member out of
+   * the archive pull (see fake_client_seams.h) - a test's bcl_send would
+   * then collide with transport.o's. A caller that connected is
+   * responsible for bcl_disconnect() first; ballotu does. */
   free(ctx);
 }
 

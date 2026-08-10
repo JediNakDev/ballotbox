@@ -56,6 +56,19 @@ void test_U35_join_timeout_creates_no_session(void) {
   TEST_ASSERT_EQUAL_INT(1, session.joined);
 }
 
+/* Regression: ballotu.c's real call site is bu_join(ctx, &session, id,
+ * session.cert_name) - the cert_name argument aliases the very struct
+ * bu_join's ADMITTED case memsets. A join that reads its own source string
+ * after clearing it must still end up with the right value, not "". */
+void test_join_survives_cert_name_aliasing_session(void) {
+  snprintf(session.cert_name, BB_CERT_LEN, "alice");
+  fake_client.response.status = BB_OK;
+  fake_client.response.election.state = BB_STATE_OPEN;
+
+  TEST_ASSERT_EQUAL_INT(BU_JOIN_ADMITTED, bu_join(ctx, &session, "E-100", session.cert_name));
+  TEST_ASSERT_EQUAL_STRING("alice", session.cert_name);
+}
+
 /* U-36: a non-open election is reported as not-open and is still remembered
  * locally (UC-2 alt flow 4a), but the voter is not joined to it. */
 void test_U36_not_open_election_recorded_locally(void) {
@@ -107,6 +120,28 @@ void test_admission_resets_the_session(void) {
   TEST_ASSERT_EQUAL_INT(0, session.has_ballot);
   TEST_ASSERT_EQUAL_INT(0, session.ballot_version);
   TEST_ASSERT_EQUAL_STRING("", session.my_hash);
+}
+
+/* Regression: a rejoin (new process, or Join picked again mid-session) used
+ * to always leave has_ballot/ballot_version at the ADMITTED case's own
+ * memset, regardless of whether this cert already had a ballot - so
+ * bu_route_vote always chose BU_CAST and a returning voter's next vote
+ * silently overwrote their receipt instead of superseding it (UC-4). The
+ * server now reports this at JOIN time (has_prior_ballot/prior_ballot_
+ * version on bcl_response_t, populated from the store's own GET_PRIOR_
+ * BALLOT record - see bb_join, handlers.c); this is bu_join's half of the
+ * fix, that the session actually picks the report up. The no-prior-ballot
+ * case is covered by test_admission_resets_the_session above, since
+ * fake_client_reset() leaves has_prior_ballot at its zero default. */
+void test_join_reports_prior_ballot_into_session(void) {
+  fake_client.response.status = BB_OK;
+  fake_client.response.election.state = BB_STATE_OPEN;
+  fake_client.response.has_prior_ballot = 1;
+  fake_client.response.prior_ballot_version = 3;
+
+  TEST_ASSERT_EQUAL_INT(BU_JOIN_ADMITTED, bu_join(ctx, &session, "E-100", "alice"));
+  TEST_ASSERT_EQUAL_INT(1, session.has_ballot);
+  TEST_ASSERT_EQUAL_INT(3, session.ballot_version);
 }
 
 /* ---- UC-3 / UC-4: submit ----------------------------------------------- */
@@ -188,9 +223,11 @@ void test_encrypt_failure_sends_nothing(void) {
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_U35_join_timeout_creates_no_session);
+  RUN_TEST(test_join_survives_cert_name_aliasing_session);
   RUN_TEST(test_U36_not_open_election_recorded_locally);
   RUN_TEST(test_join_refusals_leave_no_session);
   RUN_TEST(test_admission_resets_the_session);
+  RUN_TEST(test_join_reports_prior_ballot_into_session);
   RUN_TEST(test_U37_vote_before_join_sends_nothing);
   RUN_TEST(test_U38_cast_flow_records_receipt);
   RUN_TEST(test_U39_update_flow_advances_version);

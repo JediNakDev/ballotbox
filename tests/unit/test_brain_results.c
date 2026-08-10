@@ -138,6 +138,22 @@ void test_U28_zero_ballot_publish(void) {
   TEST_ASSERT_EQUAL_INT(0, out.tally[1]);
 }
 
+/* The published view carries the election's title alongside its tally, so a
+ * results screen can show "E-042: <title>" instead of just the id the
+ * caller already typed. fetch_results (the shared body behind both
+ * bb_get_results and bb_get_results_admin) sets it from the same election
+ * row it already loads to gate on PUBLISHED/eligibility - covering it here
+ * covers both public entry points, since they share this exact function. */
+void test_results_carry_the_election_title(void) {
+  published_with_ballots(1);
+  snprintf(fake.election.title, BB_TITLE_LEN, "Favourite colour");
+
+  bb_results_t out;
+  memset(&out, 0, sizeof(out));
+  TEST_ASSERT_EQUAL_INT(BB_OK, bb_get_results(ctx, "E-042", "alice", &out));
+  TEST_ASSERT_EQUAL_STRING("Favourite colour", out.title);
+}
+
 /* An unknown election is not found, for publish and for results alike. */
 void test_unknown_election_not_found(void) {
   fake.election_present = 0;
@@ -154,6 +170,7 @@ int main(void) {
   RUN_TEST(test_U26_results_gated_before_publish);
   RUN_TEST(test_U27_ineligible_observer_refused);
   RUN_TEST(test_U28_zero_ballot_publish);
+  RUN_TEST(test_results_carry_the_election_title);
   RUN_TEST(test_unknown_election_not_found);
   return UNITY_END();
 }

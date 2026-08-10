@@ -46,7 +46,7 @@ void test_U01_valid_config_creates_draft_election(void) {
   bb_config_t c = base_config();
   char id[BB_ID_LEN] = {0};
 
-  TEST_ASSERT_EQUAL_INT(BB_OK, bb_create_election(ctx, &c, id));
+  TEST_ASSERT_EQUAL_INT(BB_OK, bb_create_election(ctx, &c, NULL, id));
 
   /* Exactly one write, and it is the election insert. */
   TEST_ASSERT_EQUAL_INT(1, fake_write_count());
@@ -66,7 +66,7 @@ void test_U05_minimum_window_creates_election(void) {
   snprintf(c.close_time, BB_TIME_LEN, T_PLUS_1S);
   char id[BB_ID_LEN] = {0};
 
-  TEST_ASSERT_EQUAL_INT(BB_OK, bb_create_election(ctx, &c, id));
+  TEST_ASSERT_EQUAL_INT(BB_OK, bb_create_election(ctx, &c, NULL, id));
   TEST_ASSERT_EQUAL_INT(1, fake_count(BB_DB_INSERT_ELECTION));
 }
 
@@ -103,10 +103,36 @@ void test_U02_U03_U04_invalid_config_creates_nothing(void) {
     fake_reset();
     char id[BB_ID_LEN] = {0};
     TEST_ASSERT_EQUAL_INT_MESSAGE(cases[i].expected,
-                                  bb_create_election(ctx, &cases[i].config, id), cases[i].label);
+                                  bb_create_election(ctx, &cases[i].config, NULL, id),
+                                  cases[i].label);
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_write_count(), cases[i].label);
     TEST_ASSERT_EQUAL_STRING_MESSAGE("", id, cases[i].label);
   }
+}
+
+/* A caller-supplied desired_id is used verbatim when free. */
+void test_desired_id_used_when_free(void) {
+  bb_config_t c = base_config();
+  char id[BB_ID_LEN] = {0};
+
+  TEST_ASSERT_EQUAL_INT(BB_OK, bb_create_election(ctx, &c, "E-777", id));
+  TEST_ASSERT_EQUAL_STRING("E-777", id);
+
+  const fake_call_t *insert = fake_last(BB_DB_INSERT_ELECTION);
+  TEST_ASSERT_NOT_NULL(insert);
+  TEST_ASSERT_EQUAL_STRING("E-777", insert->election_id);
+}
+
+/* A caller-supplied desired_id already in use is refused, and nothing is
+ * written - same "gate before write" shape as every other config check. */
+void test_desired_id_refused_when_taken(void) {
+  bb_config_t c = base_config();
+  fake_seed_election("E-777", BB_STATE_DRAFT, 2, NULL, 0);
+  char id[BB_ID_LEN] = {0};
+
+  TEST_ASSERT_EQUAL_INT(BB_ERR_CONFIG_ID_TAKEN, bb_create_election(ctx, &c, "E-777", id));
+  TEST_ASSERT_EQUAL_INT(0, fake_write_count());
+  TEST_ASSERT_EQUAL_STRING("", id);
 }
 
 /* A store failure on the insert is reported, not swallowed. */
@@ -117,7 +143,7 @@ void test_store_failure_is_propagated(void) {
   fake.fail_code = BB_ERR_DB;
 
   char id[BB_ID_LEN] = {0};
-  TEST_ASSERT_EQUAL_INT(BB_ERR_DB, bb_create_election(ctx, &c, id));
+  TEST_ASSERT_EQUAL_INT(BB_ERR_DB, bb_create_election(ctx, &c, NULL, id));
   TEST_ASSERT_EQUAL_STRING("", id);
 }
 
@@ -126,6 +152,8 @@ int main(void) {
   RUN_TEST(test_U01_valid_config_creates_draft_election);
   RUN_TEST(test_U05_minimum_window_creates_election);
   RUN_TEST(test_U02_U03_U04_invalid_config_creates_nothing);
+  RUN_TEST(test_desired_id_used_when_free);
+  RUN_TEST(test_desired_id_refused_when_taken);
   RUN_TEST(test_store_failure_is_propagated);
   return UNITY_END();
 }
