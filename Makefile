@@ -1,7 +1,11 @@
 CC      := cc
 CFLAGS  := -Wall -Wextra -Werror=unused-result -O2 -Iinclude
 LDFLAGS := -Llib
-# --start-group/--end-group: static archives resolve left-to-right and ld
+
+# Asked once and reused: both the linker group and the OpenSSL lookup below
+# differ between Apple's toolchain and everyone else's.
+UNAME_S := $(shell uname -s)
+# --start-group/--end-group: static archives resolve left-to-right and GNU ld
 # does not re-scan one it already finished with, so any ordering of our own
 # archives here is fragile the moment one of them calls into another (e.g.
 # libballotclient's transport.c calling into libtetrissh - see git history,
@@ -9,10 +13,36 @@ LDFLAGS := -Llib
 # ld keep re-scanning these until nothing new resolves, so their order here
 # stops being load-bearing. System libs (ssl/crypto/pthread) stay outside:
 # nothing in the group calls back into them in a cycle that needs it.
-LDLIBS  := -Wl,--start-group -ltetrisauth -ltetrissh -lhtttp -lballotclient -lballotbrain -ltetrisdb -ltetrisutil -Wl,--end-group -lssl -lcrypto -lpthread
-OPENSSL := $(shell brew --prefix openssl)
+#
+# Apple's linker has no such once-through limitation - it resolves this
+# circularity on its own - and does not recognise --start-group/--end-group
+# at all, so passing them there is a hard link error, not a no-op. GRP_START/
+# GRP_END are therefore empty on Darwin and the real flags everywhere else.
+ifeq ($(UNAME_S),Darwin)
+GRP_START :=
+GRP_END   :=
+else
+GRP_START := -Wl,--start-group
+GRP_END   := -Wl,--end-group
+endif
+LDLIBS  := $(GRP_START) -ltetrisauth -ltetrissh -lhtttp -lballotclient -lballotbrain -ltetrisdb -ltetrisutil $(GRP_END) -lssl -lcrypto -lpthread
+# OpenSSL, wherever the platform keeps it.
+#
+# Homebrew installs outside the compiler's default search path, so macOS needs
+# an explicit -I/-L. A Linux distro package is already on the default path, and
+# asking brew for it there prints "make: brew: No such file or directory" and
+# yields an empty prefix - which then expands to -I/include -L/lib, two paths
+# that are wrong everywhere and merely harmless while the system copy happens
+# to be found anyway.
+#
+# So: only ask brew on Darwin, and only add the flags if the answer is real.
+ifeq ($(UNAME_S),Darwin)
+OPENSSL := $(shell brew --prefix openssl 2>/dev/null)
+endif
+ifneq ($(OPENSSL),)
 CFLAGS  += -I$(OPENSSL)/include
 LDFLAGS += -L$(OPENSSL)/lib
+endif
 
 BIN_DIR := bin
 LIB_DIR := lib
@@ -171,7 +201,7 @@ TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR) -Itests/unit/support
 # see that comment. Each test defines the seams it wants to substitute;
 # because the libraries are static archives, a seam defined in the test keeps
 # the real member out of the binary (see tests/unit/support/fake_*_seams.h).
-TEST_LDLIBS := -L$(LIB_DIR) -Wl,--start-group -lballotclient -lballotbrain -lhtttp -ltetrissh -ltetrisdb -lcommon -Wl,--end-group -lssl -lcrypto -lpthread
+TEST_LDLIBS := -L$(LIB_DIR) $(GRP_START) -lballotclient -lballotbrain -lhtttp -ltetrissh -ltetrisdb -lcommon $(GRP_END) -lssl -lcrypto -lpthread
 
 $(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libcommon.a $(HEADERS)
 	$(CC) $(TEST_CFLAGS) $< $(UNITY_DIR)/unity.c -o $@ $(TEST_LDLIBS)
