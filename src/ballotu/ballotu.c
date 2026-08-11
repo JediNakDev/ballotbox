@@ -20,8 +20,8 @@
  */
 
 #include "libballotclient/voter.h"
-#include "libcommon/playername.h"
 #include "libtetrisui/tetrisui.h"
+#include "libtetrisutil/playername.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -45,34 +45,34 @@ static char g_ca_path[512];
 
 static const char *result_text(bb_result_t rc) {
   switch (rc) {
-    case BB_OK:
-      return "OK";
-    case BB_ERR_NOT_OPEN:
-      return "The election is not open.";
-    case BB_ERR_CLOSED:
-      return "Election closed mid-submit. Rejected by System.";
-    case BB_ERR_NOT_ELIGIBLE:
-      return "Your cert is not on the eligible-voter list.";
-    case BB_ERR_CERT_INVALID:
-      return "Cert rejected.";
-    case BB_ERR_CERT_EXPIRED:
-      return "Cert expired or forged.";
-    case BB_ERR_REPLAY:
-      return "That ballot was already submitted (replay).";
-    case BB_ERR_BAD_OPTION:
-      return "Selected option was out of range.";
-    case BB_ERR_DECRYPT:
-      return "Ballot could not be decrypted.";
-    case BB_ERR_NOT_PUBLISHED:
-      return "Results not available.";
-    case BB_ERR_NOT_FOUND:
-      return "Not found.";
-    case BB_ERR_NOT_IMPLEMENTED:
-      return "The backend storage is not wired up yet - try again once it is.";
-    case BB_ERR_DB:
-      return "Could not reach ballotd.";
-    default:
-      return "Rejected by System.";
+  case BB_OK:
+    return "OK";
+  case BB_ERR_NOT_OPEN:
+    return "The election is not open.";
+  case BB_ERR_CLOSED:
+    return "Election closed mid-submit. Rejected by System.";
+  case BB_ERR_NOT_ELIGIBLE:
+    return "Your cert is not on the eligible-voter list.";
+  case BB_ERR_CERT_INVALID:
+    return "Cert rejected.";
+  case BB_ERR_CERT_EXPIRED:
+    return "Cert expired or forged.";
+  case BB_ERR_REPLAY:
+    return "That ballot was already submitted (replay).";
+  case BB_ERR_BAD_OPTION:
+    return "Selected option was out of range.";
+  case BB_ERR_DECRYPT:
+    return "Ballot could not be decrypted.";
+  case BB_ERR_NOT_PUBLISHED:
+    return "Results not available.";
+  case BB_ERR_NOT_FOUND:
+    return "Not found.";
+  case BB_ERR_NOT_IMPLEMENTED:
+    return "The backend storage is not wired up yet - try again once it is.";
+  case BB_ERR_DB:
+    return "Could not reach ballotd.";
+  default:
+    return "Rejected by System.";
   }
 }
 
@@ -101,14 +101,15 @@ static int screen_credential_flow(bool registering) {
   int start_field = 0;
 
   for (;;) {
-    if (tetrisui_form_ex(registering ? "Register" : "Log in", labels, values, 2, 1u << 1, error,
-                         start_field) != 0) {
+    if (tetrisui_form_ex(registering ? "Register" : "Log in", labels, values, 2,
+                         1u << 1, error, start_field) != 0) {
       return 0; /* cancelled: back to the Log in / Register menu */
     }
 
     char folded[MAX_PLAYER_NAME];
     size_t ulen = strlen(values[0]);
-    if (!player_name_ok(values[0], ulen) || player_name_fold(folded, sizeof folded, values[0], ulen) != 0) {
+    if (!player_name_ok(values[0], ulen) ||
+        player_name_fold(folded, sizeof folded, values[0], ulen) != 0) {
       error = "Username must be 1-15 characters: letters, digits, _ or -.";
       start_field = 0;
       continue;
@@ -129,10 +130,12 @@ static int screen_credential_flow(bool registering) {
     const char *steps[] = {registering ? "Registering" : "Logging in"};
     tetrisui_progress_begin("Contacting ballotd", steps, 1);
     int status = 0;
-    int rc = bcl_auth(g_ctx, registering ? "REGISTER" : "LOGIN", folded, values[1], &status);
+    int rc = bcl_auth(g_ctx, registering ? "REGISTER" : "LOGIN", folded,
+                      values[1], &status);
     tetrisui_progress_step(0, rc == 0 && status == 200);
     tetrisui_progress_end();
-    memset(values[1], 0, sizeof values[1]); /* scrub the typed password either way */
+    memset(values[1], 0,
+           sizeof values[1]); /* scrub the typed password either way */
 
     if (rc != 0) {
       error = "Could not reach ballotd.";
@@ -141,38 +144,39 @@ static int screen_credential_flow(bool registering) {
     }
 
     switch (status) {
-      case 200:
-        memset(&g_session, 0, sizeof(g_session));
-        snprintf(g_session.cert_name, BB_CERT_LEN, "%s", folded);
-        tetrisui_set_status("ballotu", folded, "");
-        return 1;
-      case 400:
-        error = "Rejected: malformed request.";
-        start_field = 0;
-        break;
-      case 401:
-        error = "Incorrect password.";
-        start_field = 1;
-        break;
-      case 404:
-        error = "No account with that username. Register instead?";
-        start_field = 0;
-        break;
-      case 409:
-        error = "That username is already taken - pick another.";
-        start_field = 0;
-        break;
-      case 500:
-      default:
-        error = "Could not reach the account service - try again shortly.";
-        start_field = 0;
-        break;
+    case 200:
+      memset(&g_session, 0, sizeof(g_session));
+      snprintf(g_session.cert_name, BB_CERT_LEN, "%s", folded);
+      tetrisui_set_status("ballotu", folded, "");
+      return 1;
+    case 400:
+      error = "Rejected: malformed request.";
+      start_field = 0;
+      break;
+    case 401:
+      error = "Incorrect password.";
+      start_field = 1;
+      break;
+    case 404:
+      error = "No account with that username. Register instead?";
+      start_field = 0;
+      break;
+    case 409:
+      error = "That username is already taken - pick another.";
+      start_field = 0;
+      break;
+    case 500:
+    default:
+      error = "Could not reach the account service - try again shortly.";
+      start_field = 0;
+      break;
     }
   }
 }
 
 static int screen_login(void) {
-  const char *steps[] = {"Opening secure session", "Presenting cert (tetrissh handshake)"};
+  const char *steps[] = {"Opening secure session",
+                         "Presenting cert (tetrissh handshake)"};
   tetrisui_progress_begin("Connecting", steps, 2);
   bb_result_t rc = bcl_connect(g_ctx, g_host, g_port, g_ca_path);
   /* One real round trip covers both steps - see client.h's bcl_connect
@@ -183,7 +187,8 @@ static int screen_login(void) {
 
   if (rc != BB_OK) {
     char line[96];
-    snprintf(line, sizeof(line), "Could not reach ballotd at %s:%d.", g_host, g_port);
+    snprintf(line, sizeof(line), "Could not reach ballotd at %s:%d.", g_host,
+             g_port);
     const char *lines[] = {line, "Check the server is running and try again."};
     tetrisui_message("Connection failed", lines, 2);
     return 0;
@@ -196,12 +201,14 @@ static int screen_login(void) {
       bcl_disconnect(g_ctx);
       return 0;
     }
-    if (screen_credential_flow(sel == 1)) return 1;
+    if (screen_credential_flow(sel == 1))
+      return 1;
     /* form was cancelled: stay connected, back to this menu */
   }
 }
 
-/* ---- UC-2: join ----------------------------------------------------------- */
+/* ---- UC-2: join -----------------------------------------------------------
+ */
 
 /* Defined below (UC-3/UC-4) - forward declared so screen_join_election can
  * actually route into it rather than just announcing that it would. */
@@ -209,46 +216,48 @@ static void cast_common(int is_update);
 
 static void screen_join_election(void) {
   char id[BB_ID_LEN] = "";
-  if (tetrisui_input("Join election (UC-2)", "Enter election ID (e.g. E-100):", id, sizeof(id)) !=
-      0)
+  if (tetrisui_input("Join election (UC-2)",
+                     "Enter election ID (e.g. E-100):", id, sizeof(id)) != 0)
     return;
-  if (strlen(id) == 0) return;
+  if (strlen(id) == 0)
+    return;
 
   const char *steps[] = {"Contacting ballotd"};
   tetrisui_progress_begin("Joining election", steps, 1);
-  bu_join_outcome_t outcome = bu_join(g_ctx, &g_session, id, g_session.cert_name);
+  bu_join_outcome_t outcome =
+      bu_join(g_ctx, &g_session, id, g_session.cert_name);
   tetrisui_progress_step(0, outcome != BU_JOIN_TIMEOUT);
   tetrisui_progress_end();
 
   switch (outcome) {
-    case BU_JOIN_TIMEOUT: {
-      const char *lines[] = {"Could not reach the election.",
-                             result_text(BB_ERR_NOT_IMPLEMENTED)};
-      tetrisui_message("Join failed", lines, 2);
-      return;
-    }
-    case BU_JOIN_NOT_FOUND: {
-      char line[64];
-      snprintf(line, sizeof(line), "Election '%s' not found.", id);
-      const char *lines[] = {line};
-      tetrisui_message("Join failed", lines, 1);
-      return;
-    }
-    case BU_JOIN_NOT_ELIGIBLE: {
-      const char *lines[] = {"Your cert is not on the eligible-voter list",
-                             "for this election. Refused."};
-      tetrisui_message("Join refused", lines, 2);
-      return;
-    }
-    case BU_JOIN_NOT_OPEN: {
-      char line[96];
-      snprintf(line, sizeof(line), "Cannot join %s: election is not Open.", id);
-      const char *lines[] = {line, "Refused."};
-      tetrisui_message("Join refused", lines, 2);
-      return;
-    }
-    case BU_JOIN_ADMITTED:
-      break;
+  case BU_JOIN_TIMEOUT: {
+    const char *lines[] = {"Could not reach the election.",
+                           result_text(BB_ERR_NOT_IMPLEMENTED)};
+    tetrisui_message("Join failed", lines, 2);
+    return;
+  }
+  case BU_JOIN_NOT_FOUND: {
+    char line[64];
+    snprintf(line, sizeof(line), "Election '%s' not found.", id);
+    const char *lines[] = {line};
+    tetrisui_message("Join failed", lines, 1);
+    return;
+  }
+  case BU_JOIN_NOT_ELIGIBLE: {
+    const char *lines[] = {"Your cert is not on the eligible-voter list",
+                           "for this election. Refused."};
+    tetrisui_message("Join refused", lines, 2);
+    return;
+  }
+  case BU_JOIN_NOT_OPEN: {
+    char line[96];
+    snprintf(line, sizeof(line), "Cannot join %s: election is not Open.", id);
+    const char *lines[] = {line, "Refused."};
+    tetrisui_message("Join refused", lines, 2);
+    return;
+  }
+  case BU_JOIN_ADMITTED:
+    break;
   }
 
   /* The status bar's third field is otherwise blank for ballotu (set to ""
@@ -258,32 +267,36 @@ static void screen_join_election(void) {
    * termination within that even if id+title together would not fit,
    * unlike tetrisui_set_status's own strncpy on a too-long source. */
   char state[32];
-  snprintf(state, sizeof(state), "%s: %s", g_session.election_id, g_session.title);
+  snprintf(state, sizeof(state), "%s: %s", g_session.election_id,
+           g_session.title);
   tetrisui_set_status("ballotu", g_session.cert_name, state);
 
   if (g_session.has_ballot) {
     const char *lines[] = {"You already have a ballot for this election.",
                            "Routing you to Update Vote (UC-4)."};
     tetrisui_message("Already voted", lines, 2);
-    cast_common(1); /* the message above is the routing, not just an announcement of it */
+    cast_common(1); /* the message above is the routing, not just an
+                       announcement of it */
     return;
   }
 
   char lines_buf[BB_MAX_OPTIONS + 2][96];
   const char *lines[BB_MAX_OPTIONS + 2];
-  snprintf(lines_buf[0], sizeof(lines_buf[0]), "Joined %s: %s", g_session.election_id,
-          g_session.title);
+  snprintf(lines_buf[0], sizeof(lines_buf[0]), "Joined %s: %s",
+           g_session.election_id, g_session.title);
   lines[0] = lines_buf[0];
   snprintf(lines_buf[1], sizeof(lines_buf[1]), "Ballot options:");
   lines[1] = lines_buf[1];
   for (int i = 0; i < g_session.option_count; i++) {
-    snprintf(lines_buf[i + 2], sizeof(lines_buf[i + 2]), "  %d) %s", i + 1, g_session.options[i]);
+    snprintf(lines_buf[i + 2], sizeof(lines_buf[i + 2]), "  %d) %s", i + 1,
+             g_session.options[i]);
     lines[i + 2] = lines_buf[i + 2];
   }
   tetrisui_message("Join successful", lines, g_session.option_count + 2);
 }
 
-/* ---- UC-3 / UC-4: cast / update -------------------------------------------- */
+/* ---- UC-3 / UC-4: cast / update --------------------------------------------
+ */
 
 static void cast_common(int is_update) {
   if (!g_session.joined) {
@@ -294,7 +307,8 @@ static void cast_common(int is_update) {
 
   bu_vote_action_t action = bu_route_vote(&g_session);
   if (is_update && action == BU_CAST) {
-    const char *lines[] = {"You have no prior ballot yet.", "Routing you to Cast Vote (UC-3)."};
+    const char *lines[] = {"You have no prior ballot yet.",
+                           "Routing you to Cast Vote (UC-3)."};
     tetrisui_message("Nothing to update", lines, 2);
     is_update = 0;
   } else if (!is_update && action == BU_UPDATE) {
@@ -305,27 +319,33 @@ static void cast_common(int is_update) {
   }
 
   const char *items[BB_MAX_OPTIONS];
-  for (int i = 0; i < g_session.option_count; i++) items[i] = g_session.options[i];
+  for (int i = 0; i < g_session.option_count; i++)
+    items[i] = g_session.options[i];
 
   char title[96];
   if (is_update) {
     snprintf(title, sizeof(title), "Update vote (prior ballot v%d exists)",
-            g_session.ballot_version);
+             g_session.ballot_version);
   } else {
     snprintf(title, sizeof(title), "Cast vote: %s", g_session.title);
   }
-  int sel = tetrisui_menu(title, items, g_session.option_count, "Enter to select your option");
-  if (sel < 0) return;
+  int sel = tetrisui_menu(title, items, g_session.option_count,
+                          "Enter to select your option");
+  if (sel < 0)
+    return;
 
   char q[96];
   snprintf(q, sizeof(q), "Confirm vote for '%s'?", g_session.options[sel]);
-  if (!tetrisui_confirm("Confirm ballot", q)) return;
+  if (!tetrisui_confirm("Confirm ballot", q))
+    return;
 
   char nonce[BB_NONCE_LEN];
-  snprintf(nonce, sizeof(nonce), "%08lx%08x", (unsigned long)time(NULL), rand());
+  snprintf(nonce, sizeof(nonce), "%08lx%08x", (unsigned long)time(NULL),
+           rand());
 
   const char *steps[] = {"Encrypting ballot and submitting"};
-  tetrisui_progress_begin(is_update ? "Submitting updated ballot" : "Submitting ballot", steps, 1);
+  tetrisui_progress_begin(
+      is_update ? "Submitting updated ballot" : "Submitting ballot", steps, 1);
   bb_receipt_t receipt;
   memset(&receipt, 0, sizeof(receipt));
   bb_result_t rc = bu_submit_vote(g_ctx, &g_session, sel, nonce, &receipt);
@@ -338,21 +358,26 @@ static void cast_common(int is_update) {
     return;
   }
 
-  const char *lines[] = {
-      is_update ? "Vote updated. New receipt issued:" : "Vote recorded. Receipt issued:",
-      receipt.hash, "Keep this hash to check your vote later (UC-6)."};
+  const char *lines[] = {is_update ? "Vote updated. New receipt issued:"
+                                   : "Vote recorded. Receipt issued:",
+                         receipt.hash,
+                         "Keep this hash to check your vote later (UC-6)."};
   tetrisui_message("Success", lines, 3);
 }
 
 static void screen_cast_vote(void) { cast_common(0); }
 static void screen_update_vote(void) { cast_common(1); }
 
-/* ---- UC-5: results ---------------------------------------------------------- */
+/* ---- UC-5: results ----------------------------------------------------------
+ */
 
 static void screen_view_results(void) {
   char id[BB_ID_LEN] = "";
-  if (tetrisui_input("View results (UC-5)", "Enter election ID:", id, sizeof(id)) != 0) return;
-  if (strlen(id) == 0) return;
+  if (tetrisui_input("View results (UC-5)", "Enter election ID:", id,
+                     sizeof(id)) != 0)
+    return;
+  if (strlen(id) == 0)
+    return;
 
   bcl_request_t req;
   memset(&req, 0, sizeof(req));
@@ -392,17 +417,20 @@ static void screen_view_results(void) {
   for (int i = 0; i < resp.option_count; i++) {
     char bar[32];
     int fill = resp.tally[i] > 20 ? 20 : resp.tally[i];
-    if (fill < 0) fill = 0;
+    if (fill < 0)
+      fill = 0;
     memset(bar, '#', (size_t)fill);
     bar[fill] = '\0';
-    snprintf(buf[n], sizeof(buf[n]), "  %-10s %3d %s", resp.options[i], resp.tally[i], bar);
+    snprintf(buf[n], sizeof(buf[n]), "  %-10s %3d %s", resp.options[i],
+             resp.tally[i], bar);
     lines[n] = buf[n];
     n++;
   }
   tetrisui_list_view("Election results", lines, n);
 }
 
-/* ---- UC-6: check your vote -------------------------------------------------- */
+/* ---- UC-6: check your vote --------------------------------------------------
+ */
 
 static void screen_check_vote(void) {
   /* Server-side FIND_HASH is a direct, literal lookup of the receipt hash
@@ -414,16 +442,19 @@ static void screen_check_vote(void) {
    * future real commitment scheme, just not wired in here until the server
    * side actually uses a matching KDF. */
   char hash[BB_HASH_LEN] = "";
-  if (tetrisui_input("Check your vote (UC-6)", "Enter your receipt hash:", hash, sizeof(hash)) !=
-      0)
+  if (tetrisui_input("Check your vote (UC-6)", "Enter your receipt hash:", hash,
+                     sizeof(hash)) != 0)
     return;
-  if (strlen(hash) == 0) return;
+  if (strlen(hash) == 0)
+    return;
 
   char id[BB_ID_LEN] = "";
-  if (tetrisui_input("Check your vote (UC-6)", "Enter the election ID to check against:", id,
+  if (tetrisui_input("Check your vote (UC-6)",
+                     "Enter the election ID to check against:", id,
                      sizeof(id)) != 0)
     return;
-  if (strlen(id) == 0) return;
+  if (strlen(id) == 0)
+    return;
 
   bcl_request_t req;
   memset(&req, 0, sizeof(req));
@@ -441,39 +472,44 @@ static void screen_check_vote(void) {
 
   bu_check_outcome_t outcome = bu_classify_check(status, resp.found);
   switch (outcome) {
-    case BU_CHECK_COUNTED: {
-      char line2[96];
-      snprintf(line2, sizeof(line2), "Your vote is option index %d (%s) and is included in the tally.",
-              resp.found_option, resp.found_option_name);
-      const char *lines[] = {line1, line2};
-      tetrisui_message("Verified", lines, 2);
-      return;
-    }
-    case BU_CHECK_DROPPED: {
-      const char *lines[] = {line1, "Hash not found among live (non-superseded) ballots.",
-                             "Verification FAILED - dropped ballot.",
-                             "Please raise this with the Admin."};
-      tetrisui_message("Verification failed", lines, 4);
-      return;
-    }
-    case BU_CHECK_UNAVAILABLE: {
-      const char *lines[] = {line1, result_text(status)};
-      tetrisui_message("Verification unavailable", lines, 2);
-      return;
-    }
+  case BU_CHECK_COUNTED: {
+    char line2[96];
+    snprintf(line2, sizeof(line2),
+             "Your vote is option index %d (%s) and is included in the tally.",
+             resp.found_option, resp.found_option_name);
+    const char *lines[] = {line1, line2};
+    tetrisui_message("Verified", lines, 2);
+    return;
+  }
+  case BU_CHECK_DROPPED: {
+    const char *lines[] = {
+        line1, "Hash not found among live (non-superseded) ballots.",
+        "Verification FAILED - dropped ballot.",
+        "Please raise this with the Admin."};
+    tetrisui_message("Verification failed", lines, 4);
+    return;
+  }
+  case BU_CHECK_UNAVAILABLE: {
+    const char *lines[] = {line1, result_text(status)};
+    tetrisui_message("Verification unavailable", lines, 2);
+    return;
+  }
   }
 }
 
-/* ---- entry point ------------------------------------------------------------ */
+/* ---- entry point ------------------------------------------------------------
+ */
 
 static void usage(FILE *out, const char *argv0) {
-  fprintf(out,
-          "usage: %s [-H host] [-p port] [-C ca_cert] [-h]\n"
-          "  -H host     ballotd's voter-channel host, dotted-quad (default %s)\n"
-          "  -p port     ballotd's voter-channel TCP port (default %d)\n"
-          "  -C ca_cert  CA certificate PEM to verify ballotd against (default %s)\n"
-          "  -h          show this help\n",
-          argv0, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_CA_PATH);
+  fprintf(
+      out,
+      "usage: %s [-H host] [-p port] [-C ca_cert] [-h]\n"
+      "  -H host     ballotd's voter-channel host, dotted-quad (default %s)\n"
+      "  -p port     ballotd's voter-channel TCP port (default %d)\n"
+      "  -C ca_cert  CA certificate PEM to verify ballotd against (default "
+      "%s)\n"
+      "  -h          show this help\n",
+      argv0, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_CA_PATH);
 }
 
 int main(int argc, char **argv) {
@@ -484,21 +520,21 @@ int main(int argc, char **argv) {
   int opt;
   while ((opt = getopt(argc, argv, "H:p:C:h")) != -1) {
     switch (opt) {
-      case 'H':
-        snprintf(g_host, sizeof(g_host), "%s", optarg);
-        break;
-      case 'p':
-        g_port = atoi(optarg);
-        break;
-      case 'C':
-        snprintf(g_ca_path, sizeof(g_ca_path), "%s", optarg);
-        break;
-      case 'h':
-        usage(stdout, argv[0]);
-        return 0;
-      default:
-        usage(stderr, argv[0]);
-        return 2;
+    case 'H':
+      snprintf(g_host, sizeof(g_host), "%s", optarg);
+      break;
+    case 'p':
+      g_port = atoi(optarg);
+      break;
+    case 'C':
+      snprintf(g_ca_path, sizeof(g_ca_path), "%s", optarg);
+      break;
+    case 'h':
+      usage(stdout, argv[0]);
+      return 0;
+    default:
+      usage(stderr, argv[0]);
+      return 2;
     }
   }
 
@@ -514,27 +550,29 @@ int main(int argc, char **argv) {
   tetrisui_set_status("ballotu", "(not logged in)", "");
 
   if (screen_login()) {
-    const char *items[] = {"Join election (UC-2)", "Cast vote (UC-3)", "Update vote (UC-4)",
-                           "View results (UC-5)", "Check your vote (UC-6)", "Quit"};
+    const char *items[] = {"Join election (UC-2)",   "Cast vote (UC-3)",
+                           "Update vote (UC-4)",     "View results (UC-5)",
+                           "Check your vote (UC-6)", "Quit"};
     for (;;) {
       int sel = tetrisui_menu("ballotu - voter menu", items, 6, NULL);
-      if (sel < 0 || sel == 5) break;
+      if (sel < 0 || sel == 5)
+        break;
       switch (sel) {
-        case 0:
-          screen_join_election();
-          break;
-        case 1:
-          screen_cast_vote();
-          break;
-        case 2:
-          screen_update_vote();
-          break;
-        case 3:
-          screen_view_results();
-          break;
-        case 4:
-          screen_check_vote();
-          break;
+      case 0:
+        screen_join_election();
+        break;
+      case 1:
+        screen_cast_vote();
+        break;
+      case 2:
+        screen_update_vote();
+        break;
+      case 3:
+        screen_view_results();
+        break;
+      case 4:
+        screen_check_vote();
+        break;
       }
     }
   }

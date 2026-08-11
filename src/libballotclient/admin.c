@@ -1,6 +1,6 @@
 #include "libballotclient/admin.h"
 #include "libballotbrain/ballotbrain.h" /* bb_validate_config (authoritative) */
-#include "libcommon/playername.h"
+#include "libtetrisutil/playername.h"
 
 #include <string.h>
 
@@ -24,7 +24,8 @@ bb_result_t bc_build_create(const bb_config_t *config, bcl_request_t *out) {
   return BB_OK;
 }
 
-int bc_fold_eligible(char out[][BB_CERT_LEN], int *count, char *bad_entry, size_t bad_cap) {
+int bc_fold_eligible(char out[][BB_CERT_LEN], int *count, char *bad_entry,
+                     size_t bad_cap) {
   if (out == NULL || count == NULL) {
     return -1;
   }
@@ -33,7 +34,8 @@ int bc_fold_eligible(char out[][BB_CERT_LEN], int *count, char *bad_entry, size_
     size_t len = strlen(out[i]);
     if (!player_name_ok(out[i], len) ||
         player_name_fold(folded, sizeof folded, out[i], len) != 0) {
-      if (bad_entry != NULL) snprintf(bad_entry, bad_cap, "%s", out[i]);
+      if (bad_entry != NULL)
+        snprintf(bad_entry, bad_cap, "%s", out[i]);
       return -1;
     }
     snprintf(out[i], BB_CERT_LEN, "%s", folded);
@@ -43,10 +45,14 @@ int bc_fold_eligible(char out[][BB_CERT_LEN], int *count, char *bad_entry, size_
   for (int i = 0; i < *count; i++) {
     int dup = 0;
     for (int j = 0; j < kept; j++) {
-      if (strcmp(out[j], out[i]) == 0) { dup = 1; break; }
+      if (strcmp(out[j], out[i]) == 0) {
+        dup = 1;
+        break;
+      }
     }
     if (!dup) {
-      if (kept != i) snprintf(out[kept], BB_CERT_LEN, "%s", out[i]);
+      if (kept != i)
+        snprintf(out[kept], BB_CERT_LEN, "%s", out[i]);
       kept++;
     }
   }
@@ -54,7 +60,8 @@ int bc_fold_eligible(char out[][BB_CERT_LEN], int *count, char *bad_entry, size_
   return 0;
 }
 
-bb_result_t bc_build_transition(bcl_op_t op, const char *election_id, bcl_request_t *out) {
+bb_result_t bc_build_transition(bcl_op_t op, const char *election_id,
+                                bcl_request_t *out) {
   if (out == NULL || election_id == NULL) {
     return BB_ERR_DB;
   }

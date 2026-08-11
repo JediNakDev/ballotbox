@@ -42,11 +42,12 @@
 #include "libballotbrain/ballotbrain.h"
 #include "libballotbrain/db.h"
 #include "libballotclient/codec.h"
-#include "libcommon/rc.h"
 #include "libtetrisdb/schema.h"
 #include "libtetrisdb/socket/conf.h"
+#include "libtetrisutil/rc.h"
 
-#define DEFAULT_PORT 7676 /* TODO: confirm no collision once other daemons pick theirs */
+#define DEFAULT_PORT                                                           \
+  7676 /* TODO: confirm no collision once other daemons pick theirs */
 #define DEFAULT_CERT "auth/server_signed.crt"
 #define DEFAULT_KEY "auth/private_key.pem"
 #define LISTEN_BACKLOG 16
@@ -59,9 +60,9 @@ typedef struct {
   char cert_path[PATH_MAX];
   char key_path[PATH_MAX];
   char ctl_path[PATH_MAX];
-  char db_dir[PATH_MAX];      /* tdb_ensure_table() target; db_dir rc key */
-  char db_sock[PATH_MAX];     /* SocketRunner unix socket; db_ipc rc key */
-  int db_timeout_ms;          /* db_timeout rc key */
+  char db_dir[PATH_MAX];  /* tdb_ensure_table() target; db_dir rc key */
+  char db_sock[PATH_MAX]; /* SocketRunner unix socket; db_ipc rc key */
+  int db_timeout_ms;      /* db_timeout rc key */
 } ballotd_opts_t;
 
 /* One new worker, announced by listener_thread to admin_thread. */
@@ -71,9 +72,10 @@ typedef struct {
 } NewWorker;
 
 static int g_notify[2];     /* listener -> admin: NewWorker */
-static int g_ctl_notify[2]; /* ctl_thread -> admin: BallotdCtlReq (see control_plane.h) */
-static int g_quit[2];       /* listener_thread + ctl_thread stop signal (polled, never read -
-                              * see the note on tetrisd's identical g_quit) */
+static int g_ctl_notify[2]; /* ctl_thread -> admin: BallotdCtlReq (see
+                               control_plane.h) */
+static int g_quit[2]; /* listener_thread + ctl_thread stop signal (polled, never
+                       * read - see the note on tetrisd's identical g_quit) */
 static int g_admin_quit[2]; /* main -> admin: teardown may begin */
 
 #define ADMIN_FIXED_FDS 3 /* g_notify, g_ctl_notify, g_admin_quit */
@@ -92,7 +94,8 @@ static void rc_apply(const char *key, const char *value, void *ctxp) {
   if (strcmp(key, "ballotd_port") == 0) {
     char *end;
     long n = strtol(value, &end, 10);
-    if (*end == '\0' && n > 0 && n < 65536) o->port = (int)n;
+    if (*end == '\0' && n > 0 && n < 65536)
+      o->port = (int)n;
   } else if (strcmp(key, "ballotd_cert") == 0) {
     snprintf(o->cert_path, sizeof o->cert_path, "%s", value);
   } else if (strcmp(key, "ballotd_key") == 0) {
@@ -106,22 +109,25 @@ static void rc_apply(const char *key, const char *value, void *ctxp) {
   } else if (strcmp(key, "db_timeout") == 0) {
     char *end;
     long n = strtol(value, &end, 10);
-    if (*end == '\0' && n >= TDB_TIMEOUT_MIN_MS && n <= TDB_TIMEOUT_MAX_MS) o->db_timeout_ms = (int)n;
+    if (*end == '\0' && n >= TDB_TIMEOUT_MIN_MS && n <= TDB_TIMEOUT_MAX_MS)
+      o->db_timeout_ms = (int)n;
   }
 }
 
 static void usage(FILE *out, const char *argv0) {
   fprintf(out,
-          "usage: %s [-p port] [-c cert] [-k key] [-C ctl_socket] [-d db_dir] [-i db_sock] [-h]\n"
+          "usage: %s [-p port] [-c cert] [-k key] [-C ctl_socket] [-d db_dir] "
+          "[-i db_sock] [-h]\n"
           "  -p port        TCP port for the voter channel (default %d)\n"
           "  -c cert        server certificate PEM (default %s)\n"
           "  -k key         server private key PEM (default %s)\n"
           "  -C ctl_socket  admin Unix socket path (default %s)\n"
-          "  -d db_dir      SimpleDB data directory, table provisioning (default %s)\n"
+          "  -d db_dir      SimpleDB data directory, table provisioning "
+          "(default %s)\n"
           "  -i db_sock     SocketRunner unix socket (default %s)\n"
           "  -h             show this help\n",
-          argv0, DEFAULT_PORT, DEFAULT_CERT, DEFAULT_KEY, CTL_SOCK_DEFAULT, TDB_DEFAULT_DIR,
-          TDB_DEFAULT_IPC);
+          argv0, DEFAULT_PORT, DEFAULT_CERT, DEFAULT_KEY, CTL_SOCK_DEFAULT,
+          TDB_DEFAULT_DIR, TDB_DEFAULT_IPC);
 }
 
 /* ------------------------------------------------------------------ */
@@ -130,7 +136,8 @@ static void usage(FILE *out, const char *argv0) {
 
 static void request_stop(void) {
   const char b = 'x';
-  if (write(g_quit[1], &b, 1) < 0 && errno != EAGAIN) perror("ballotd: quit pipe");
+  if (write(g_quit[1], &b, 1) < 0 && errno != EAGAIN)
+    perror("ballotd: quit pipe");
 }
 
 static void on_terminate(int sig) {
@@ -159,7 +166,8 @@ static void reap_bounded(pid_t pid, int timeout_ms) {
 
   for (int waited = 0; waited < timeout_ms; waited += step_ms) {
     pid_t r = waitpid(pid, NULL, WNOHANG);
-    if (r == pid || (r < 0 && errno == ECHILD)) return;
+    if (r == pid || (r < 0 && errno == ECHILD))
+      return;
 
     struct timespec ts = {.tv_sec = 0, .tv_nsec = step_ms * 1000000L};
     nanosleep(&ts, NULL);
@@ -221,18 +229,23 @@ static void *listener_thread(void *arg) {
     p[0].revents = p[1].revents = 0;
 
     if (poll(p, 2, -1) < 0) {
-      if (errno == EINTR) continue;
+      if (errno == EINTR)
+        continue;
       perror("poll");
       break;
     }
 
-    if (p[0].revents & POLLIN) break; /* checked first: quit wins */
-    if (!(p[1].revents & POLLIN)) continue;
+    if (p[0].revents & POLLIN)
+      break; /* checked first: quit wins */
+    if (!(p[1].revents & POLLIN))
+      continue;
 
     int cfd = accept(lfd, NULL, NULL);
     if (cfd < 0) {
-      if (errno == EINTR) continue;
-      if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+      if (errno == EINTR)
+        continue;
+      if (errno == EAGAIN || errno == EWOULDBLOCK)
+        continue;
       perror("accept");
       break;
     }
@@ -266,8 +279,8 @@ static void *listener_thread(void *arg) {
       char client_buf[16], admin_buf[16];
       snprintf(client_buf, sizeof client_buf, "%d", cfd);
       snprintf(admin_buf, sizeof admin_buf, "%d", sv[1]);
-      execl(SESSION_BIN, "ballot_session", client_buf, admin_buf, opts->cert_path,
-            opts->key_path, (char *)NULL);
+      execl(SESSION_BIN, "ballot_session", client_buf, admin_buf,
+            opts->cert_path, opts->key_path, (char *)NULL);
 
       fprintf(stderr, "ballotd: exec %s: %s\n", SESSION_BIN, strerror(errno));
       _exit(1);
@@ -327,7 +340,8 @@ static void admin_teardown(void) {
   /* Admin requests that arrived alongside shutdown: close rather than hang
    * the waiting ballotctl. */
   BallotdCtlReq cr;
-  while (read(g_ctl_notify[0], &cr, sizeof cr) == (ssize_t)sizeof cr) close(cr.fd);
+  while (read(g_ctl_notify[0], &cr, sizeof cr) == (ssize_t)sizeof cr)
+    close(cr.fd);
 
   for (int i = g_nfds - 1; i >= ADMIN_FIXED_FDS; i--) {
     close(g_fds[i].fd);
@@ -350,13 +364,15 @@ static void *admin_thread(void *arg) {
 
   for (;;) {
     if (poll(g_fds, (nfds_t)g_nfds, -1) < 0) {
-      if (errno == EINTR) continue;
+      if (errno == EINTR)
+        continue;
       perror("poll");
       break;
     }
 
     /* (0) teardown, before anything else. */
-    if (g_fds[2].revents & POLLIN) break;
+    if (g_fds[2].revents & POLLIN)
+      break;
 
     /* (1) new voter workers from listener_thread */
     if (g_fds[0].revents & POLLIN) {
@@ -377,12 +393,14 @@ static void *admin_thread(void *arg) {
     /* (2) admin requests from ctl_thread */
     if (g_fds[1].revents & POLLIN) {
       BallotdCtlReq cr;
-      while (read(g_ctl_notify[0], &cr, sizeof cr) == (ssize_t)sizeof cr) handle_ctl_req(&cr);
+      while (read(g_ctl_notify[0], &cr, sizeof cr) == (ssize_t)sizeof cr)
+        handle_ctl_req(&cr);
     }
 
     /* (3) requests / hangups from voter workers */
     for (int i = ADMIN_FIXED_FDS; i < g_nfds; i++) {
-      if (!(g_fds[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+      if (!(g_fds[i].revents & (POLLIN | POLLHUP | POLLERR)))
+        continue;
 
       BallotdReq req;
       int r = ballotmsg_read_req(g_fds[i].fd, &req);
@@ -427,37 +445,37 @@ int main(int argc, char **argv) {
   int opt;
   while ((opt = getopt(argc, argv, "p:c:k:C:d:i:h")) != -1) {
     switch (opt) {
-      case 'p': {
-        char *end;
-        long n = strtol(optarg, &end, 10);
-        if (*end != '\0' || n <= 0 || n >= 65536) {
-          fprintf(stderr, "ballotd: invalid port '%s'\n", optarg);
-          return 2;
-        }
-        opts.port = (int)n;
-        break;
-      }
-      case 'c':
-        snprintf(opts.cert_path, sizeof opts.cert_path, "%s", optarg);
-        break;
-      case 'k':
-        snprintf(opts.key_path, sizeof opts.key_path, "%s", optarg);
-        break;
-      case 'C':
-        snprintf(opts.ctl_path, sizeof opts.ctl_path, "%s", optarg);
-        break;
-      case 'd':
-        snprintf(opts.db_dir, sizeof opts.db_dir, "%s", optarg);
-        break;
-      case 'i':
-        snprintf(opts.db_sock, sizeof opts.db_sock, "%s", optarg);
-        break;
-      case 'h':
-        usage(stdout, argv[0]);
-        return 0;
-      default:
-        usage(stderr, argv[0]);
+    case 'p': {
+      char *end;
+      long n = strtol(optarg, &end, 10);
+      if (*end != '\0' || n <= 0 || n >= 65536) {
+        fprintf(stderr, "ballotd: invalid port '%s'\n", optarg);
         return 2;
+      }
+      opts.port = (int)n;
+      break;
+    }
+    case 'c':
+      snprintf(opts.cert_path, sizeof opts.cert_path, "%s", optarg);
+      break;
+    case 'k':
+      snprintf(opts.key_path, sizeof opts.key_path, "%s", optarg);
+      break;
+    case 'C':
+      snprintf(opts.ctl_path, sizeof opts.ctl_path, "%s", optarg);
+      break;
+    case 'd':
+      snprintf(opts.db_dir, sizeof opts.db_dir, "%s", optarg);
+      break;
+    case 'i':
+      snprintf(opts.db_sock, sizeof opts.db_sock, "%s", optarg);
+      break;
+    case 'h':
+      usage(stdout, argv[0]);
+      return 0;
+    default:
+      usage(stderr, argv[0]);
+      return 2;
     }
   }
   if (optind != argc) {
@@ -469,7 +487,8 @@ int main(int argc, char **argv) {
   /* A dead client/worker/ctl socket must not kill us. */
   signal(SIGPIPE, SIG_IGN);
 
-  if (pipe(g_notify) < 0 || pipe(g_ctl_notify) < 0 || pipe(g_quit) < 0 || pipe(g_admin_quit) < 0) {
+  if (pipe(g_notify) < 0 || pipe(g_ctl_notify) < 0 || pipe(g_quit) < 0 ||
+      pipe(g_admin_quit) < 0) {
     perror("pipe");
     return 1;
   }
@@ -481,11 +500,13 @@ int main(int argc, char **argv) {
   fcntl(g_ctl_notify[0], F_SETFL, O_NONBLOCK);
   fcntl(g_quit[1], F_SETFL, O_NONBLOCK);
 
-  if (install(SIGTERM, on_terminate) < 0 || install(SIGINT, on_terminate) < 0) return 1;
+  if (install(SIGTERM, on_terminate) < 0 || install(SIGINT, on_terminate) < 0)
+    return 1;
 
   /* Bind the admin socket before any thread starts: failure here must stop
    * the daemon outright, not race a thread that is already running. */
-  if (ctl_open(opts.ctl_path, g_quit[0], g_quit[1], g_ctl_notify[1]) < 0) return 1;
+  if (ctl_open(opts.ctl_path, g_quit[0], g_quit[1], g_ctl_notify[1]) < 0)
+    return 1;
 
   /*
    * Provision every BallotBox table before doing anything else. Like
@@ -496,13 +517,20 @@ int main(int argc, char **argv) {
    * therefore purely a filesystem operation here, independent of whether the
    * runner is currently reachable.
    */
-  if (tdb_ensure_table(opts.db_dir, BB_DB_TABLE_ELECTION, BB_DB_SCHEMA_ELECTION) != 0 ||
-      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_OPTION, BB_DB_SCHEMA_OPTION) != 0 ||
-      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_ELIGIBLE, BB_DB_SCHEMA_ELIGIBLE) != 0 ||
-      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_BALLOT, BB_DB_SCHEMA_BALLOT) != 0 ||
-      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_OWNER, BB_DB_SCHEMA_OWNER) != 0 ||
-      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_NONCE, BB_DB_SCHEMA_NONCE) != 0) {
-    fprintf(stderr, "ballotd: failed to provision tables under '%s'\n", opts.db_dir);
+  if (tdb_ensure_table(opts.db_dir, BB_DB_TABLE_ELECTION,
+                       BB_DB_SCHEMA_ELECTION) != 0 ||
+      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_OPTION, BB_DB_SCHEMA_OPTION) !=
+          0 ||
+      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_ELIGIBLE,
+                       BB_DB_SCHEMA_ELIGIBLE) != 0 ||
+      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_BALLOT, BB_DB_SCHEMA_BALLOT) !=
+          0 ||
+      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_OWNER, BB_DB_SCHEMA_OWNER) !=
+          0 ||
+      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_NONCE, BB_DB_SCHEMA_NONCE) !=
+          0) {
+    fprintf(stderr, "ballotd: failed to provision tables under '%s'\n",
+            opts.db_dir);
     return 1;
   }
 
@@ -548,7 +576,8 @@ int main(int argc, char **argv) {
   pthread_join(ctl, NULL);
 
   const char b = 'x';
-  if (write(g_admin_quit[1], &b, 1) < 0) perror("ballotd: admin quit pipe");
+  if (write(g_admin_quit[1], &b, 1) < 0)
+    perror("ballotd: admin quit pipe");
 
   pthread_join(admin, NULL);
   bb_destroy(g_ctx);

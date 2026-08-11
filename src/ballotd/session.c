@@ -7,10 +7,11 @@
  * client disconnects, then exits.
  *
  * Layering (bottom to top):
- *   libtetrissh        - encrypted, authenticated frames (session_accept/recv/send)
- *   libhtttp            - frame bytes <-> request/response struct
- *   libballotclient/codec - HTTTP <-> bcl_request_t/bcl_response_t
- *   this file            - forward to admin_thread over the socketpair, nothing else
+ *   libtetrissh        - encrypted, authenticated frames
+ * (session_accept/recv/send) libhtttp            - frame bytes <->
+ * request/response struct libballotclient/codec - HTTTP <->
+ * bcl_request_t/bcl_response_t this file            - forward to admin_thread
+ * over the socketpair, nothing else
  *
  * Unlike tetriSH's session.c, this file owns no domain state at all: every
  * BallotBox operation needs the daemon's one bb_ctx, so there is nothing
@@ -22,10 +23,10 @@
 
 #include "ballotd/adminmsg.h"
 #include "libballotclient/codec.h"
-#include "libcommon/limits.h"
 #include "libhtttp/htttp.h"
 #include "libtetrisauth/tetrisauth.h"
 #include "libtetrissh/tetrissh.h"
+#include "libtetrisutil/limits.h"
 
 #include <openssl/pem.h>
 #include <signal.h>
@@ -45,7 +46,8 @@
  */
 static EVP_PKEY *load_server_key(const char *path) {
   FILE *fp = fopen(path, "r");
-  if (fp == NULL) return NULL;
+  if (fp == NULL)
+    return NULL;
   EVP_PKEY *key = PEM_read_PrivateKey(fp, NULL, NULL, NULL);
   fclose(fp);
   return key;
@@ -62,12 +64,13 @@ static void session_reply_raw(session_t *sh, int status) {
 
   uint8_t out[512];
   uint32_t len = sizeof out;
-  if (htttp_serialize_response(&res, out, &len) == HTTTP_OK) session_send(sh, out, len);
+  if (htttp_serialize_response(&res, out, &len) == HTTTP_OK)
+    session_send(sh, out, len);
 }
 
 static bool is_voter_op(bcl_op_t op) {
-  return op == BCL_JOIN || op == BCL_CAST || op == BCL_UPDATE || op == BCL_RESULTS ||
-         op == BCL_CHECK;
+  return op == BCL_JOIN || op == BCL_CAST || op == BCL_UPDATE ||
+         op == BCL_RESULTS || op == BCL_CHECK;
 }
 
 /* One client request: decode, forward to admin_thread, wait for the reply,
@@ -108,11 +111,14 @@ static void handle_request(session_t *sh, int admin_fd, const char *cert_name,
   }
 
   snprintf(creq.req.cert_name, sizeof creq.req.cert_name, "%s", cert_name);
-  snprintf(creq.req.ballot.cert_name, sizeof creq.req.ballot.cert_name, "%s", cert_name);
+  snprintf(creq.req.ballot.cert_name, sizeof creq.req.ballot.cert_name, "%s",
+           cert_name);
 
   BallotdResp cresp;
-  if (ballotmsg_write_req(admin_fd, &creq) != 0) return; /* admin gone: no reply, disconnect */
-  if (ballotmsg_read_resp(admin_fd, &cresp) != 1) return; /* admin gone mid-request */
+  if (ballotmsg_write_req(admin_fd, &creq) != 0)
+    return; /* admin gone: no reply, disconnect */
+  if (ballotmsg_read_resp(admin_fd, &cresp) != 1)
+    return; /* admin gone mid-request */
 
   uint8_t out[SESSION_MAX_FRAME];
   uint32_t out_len = sizeof out;
@@ -135,7 +141,8 @@ static void session_main(int client_fd, int admin_fd, const char *cert_path,
    * can no longer use. */
   EVP_PKEY_free(priv);
 
-  if (hs != SESSION_OK) return;
+  if (hs != SESSION_OK)
+    return;
 
   /* The pre-auth exchange, owned end to end by libtetrisauth (unmodified -
    * same library tetriSH's own session.c calls). Blocks until the client is
@@ -176,7 +183,8 @@ static void session_main(int client_fd, int admin_fd, const char *cert_path,
  */
 int main(int argc, char **argv) {
   if (argc < 5) {
-    fprintf(stderr, "usage: %s <client_fd> <admin_fd> <cert_path> <key_path>\n", argv[0]);
+    fprintf(stderr, "usage: %s <client_fd> <admin_fd> <cert_path> <key_path>\n",
+            argv[0]);
     return 1;
   }
 

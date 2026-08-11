@@ -192,10 +192,10 @@ TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR) -Itests/unit/support
 # live there too) calls tdb_socket_* directly. No test needs to fake it (it
 # degrades to a fixed id when unreachable), but the symbols still need to
 # resolve.
-# -lcommon: bc_fold_eligible (admin.c) calls libcommon/playername.c's
+# -lcommon: bc_fold_eligible (admin.c) calls libtetrisutil/playername.c's
 # player_name_ok/player_name_fold directly (the same fold every real
 # username goes through), so libballotclient.a now has an unresolved
-# reference into libcommon.a for every test that links it - which, per the
+# reference into libtetrisutil.a for every test that links it - which, per the
 # note above, is all of them.
 # --start-group: same archive-ordering fragility as the top-level LDLIBS -
 # see that comment. Each test defines the seams it wants to substitute;
@@ -203,7 +203,7 @@ TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR) -Itests/unit/support
 # the real member out of the binary (see tests/unit/support/fake_*_seams.h).
 TEST_LDLIBS := -L$(LIB_DIR) $(GRP_START) -lballotclient -lballotbrain -lhtttp -ltetrissh -ltetrisdb -lcommon $(GRP_END) -lssl -lcrypto -lpthread
 
-$(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libcommon.a $(HEADERS)
+$(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(HEADERS)
 	$(CC) $(TEST_CFLAGS) $< $(UNITY_DIR)/unity.c -o $@ $(TEST_LDLIBS)
 
 # test_db is not a Unity test: it brings its own harness and lives in tests/
@@ -235,14 +235,14 @@ $(BIN_DIR)/test_logd: tests/test_logd.c $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/te
 # prerequisites rather than just runtime assumptions (same story as
 # test_logd needing bin/tetrislogd). Needs libtetrissh/libhtttp/libballot*
 # directly for the client-side handshake and codec calls the test makes.
-$(BIN_DIR)/test_ballotd: tests/test_ballotd.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libcommon.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
+$(BIN_DIR)/test_ballotd: tests/test_ballotd.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
 	$(CC) $(CFLAGS) tests/test_ballotd.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -lcommon -lssl -lcrypto -lpthread
 
 # Real-process E2E for the client side of the same picture: drives the real
 # bcl_connect/bu_join/bcl_send (src/libballotclient/transport.c) - the same
 # calls ballotu.c makes - against a real bin/ballotd, rather than a
 # hand-rolled socket harness like test_ballotd.c's.
-$(BIN_DIR)/test_client_transport: tests/test_client_transport.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libcommon.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
+$(BIN_DIR)/test_client_transport: tests/test_client_transport.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
 	$(CC) $(CFLAGS) tests/test_client_transport.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -lcommon -lssl -lcrypto -lpthread
 
 .PHONY: test
