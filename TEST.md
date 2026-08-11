@@ -103,6 +103,15 @@ Every error state and alternative flow is claimed by at least one test case.
 | UC-5 | Observer not eligible → refused                         | U-27                   |
 | UC-5 | Election not `PUBLISHED` → results not available        | U-26, I-14             |
 | UC-6 | Alt 4a: hash not found → dropped ballot flagged         | U-30, U-31, U-40, I-15 |
+| UC-1 | All main, boundary, time, and duplicate-id system paths | `UC1-E2E`              |
+| UC-2 | All documented join outcomes through real services      | `UC2-E2E`              |
+| UC-3 | Cast, routing, close race, and secrecy postcondition     | `UC3/4-E2E`, `UC3-LOG` |
+| UC-4 | Update, reconnect, superseding, and close race           | `UC3/4-E2E`            |
+| UC-5 | Observer/admin success, eligibility, and every state gate | `UC5-E2E`             |
+| UC-6 | Pre/post publication, unknown, superseded, and latest key | `UC6-E2E`             |
+| UC-7 | Close success and all illegal source states              | `UC7/8-E2E`            |
+| UC-8 | Publish success, terminal state, and all illegal sources | `UC7/8-E2E`            |
+| All  | Complete successful election journey                    | `JOURNEY-E2E`          |
 
 ---
 

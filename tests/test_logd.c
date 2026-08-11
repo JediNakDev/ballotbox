@@ -246,6 +246,7 @@ static int test_malformed_and_injection(void)
     memset(&m, 'A', sizeof(m));
     m.pid = 4242;
     m.level = LOG_ERROR;
+    m.dropped = 0;
     memcpy(m.msg, "forged\n[2000-01-01 00:00:00] [INFO ] pid=1: fake\x1b[31m",
            strlen("forged\n[2000-01-01 00:00:00] [INFO ] pid=1: fake\x1b[31m"));
     CHECK(send_raw(&m, sizeof(m)) == 0, "hostile record not sent");

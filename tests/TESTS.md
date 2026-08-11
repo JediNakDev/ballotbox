@@ -229,6 +229,22 @@ against a deliberately-unreachable store to check clean failure.
 | `rejoin after cast reports prior ballot (live store)` | Cast, disconnect, fresh session, re-login, JOIN again → prior ballot reported, routes to update |
 | `ADMIN_RESULTS includes the election title (live store)` | Real create→open→close→publish→results, title present on the wire |
 
+### `test_system_e2e.c` - strict path-complete system suite
+
+This executable requires Java, `db/dist/simpledb.jar`, and all BallotBox runtime executables.
+It fails instead of skipping when a dependency is unavailable.
+
+| Group | Documented paths |
+| --- | --- |
+| `UC1-E2E` | Valid create and open; missing title; zero and one option; equal and reversed times; duplicate requested identifier with unchanged original |
+| `UC2-E2E` | Eligible OPEN join; unreachable daemon; unknown election; ineligible voter; DRAFT, CLOSED, and PUBLISHED refusal |
+| `UC3/4-E2E` | Not-joined refusal; cast/update routing; receipts and versions; reconnect recovery; closed-mid-cast and closed-mid-update with preserved state |
+| `UC3-LOG` | Successful real-process cast with no log line linking voter identity to option |
+| `UC5-E2E` | Eligible observer and local-admin published views; ineligible refusal; DRAFT, OPEN, and CLOSED publication gates with no leaked data |
+| `UC6-E2E` | Live receipt before and after publication; unknown and superseded misses; latest updated receipt and choice |
+| `UC7/8-E2E` | Every legal, illegal, and self transition across DRAFT, OPEN, CLOSED, and PUBLISHED; rejected transitions are followed by the expected legal edge to prove no state write |
+| `JOURNEY-E2E` | Create, open, join, cast, disconnect, rejoin, update, close, publish, exact tally, old-receipt miss, and latest-receipt match |
+
 ---
 
 ## Infrastructure tests (`tests/`)

@@ -1,5 +1,10 @@
 # BallotBox
 
+> [!IMPORTANT]
+> Security claims involving ballot RSA-OAEP encryption, signed receipt commitments, receipt-key KDFs, and X.509 certificate verification describe the intended production design.
+> The current crypto and PKI seams use deterministic placeholders while preserving the interfaces and flows shown below.
+> Transport encryption and voter account authentication are implemented through tetriSH and tetrisauth.
+
 BallotBox is a secure e-voting system for small orgs (clubs, coops, unions) solving the core tension: ballots must be secret (untraceable to voters) yet verifiable (tally is auditable). Built on the 50.005 CoreStack/tetriSH libraries, it delivers a CLI-based voter client and admin control tool (ballotctl) over a custom C backend (ballotd), communicating via SSH/shell sessions. Key guarantees: encrypted traffic, no double-votes, no ballot-to-voter linkage in logs, and concurrency-safe tallying.
 
 ---
@@ -35,11 +40,17 @@ flowchart LR
         UC2((Join<br/>BallotBox))
         UC3((Cast a Vote))
         UC4((Update a Vote))
-        UC5((View Result))
+        UC5((View Results))
         UC6((Check Your Vote))
+        UC7((Close Election))
+        UC8((Publish Results))
     end
 
     Admin --- UC1
+    Admin --- UC5
+    Admin --- UC6
+    Admin --- UC7
+    Admin --- UC8
     Voter --- UC2
     Voter --- UC3
     Voter --- UC4
@@ -56,7 +67,7 @@ flowchart LR
 | Description    | Admin creates a new election instance and opens it for voting.     |
 | Actors         | Admin                                                              |
 | Triggers       | Admin runs the create-election command in ballotctl.               |
-| Preconditions  | Authenticated admin session (valid admin cert); ballotd reachable. |
+| Preconditions  | Admin can access ballotd's owner-only local control socket.        |
 | Postconditions | Election is Open and accepting voters.                             |
 
 **Flow**
@@ -82,17 +93,17 @@ sequenceDiagram
     participant ballotd
     participant SimpleDB
 
-    note over Admin, SimpleDB: Precondition: authenticated admin session, ballotd reachable
+    note over Admin, SimpleDB: Precondition: ballotd local control socket reachable
 
     alt invalid config
         Admin->>+ballotctl: fill in configuration
-        ballotctl->>+ballotd: submit configuration
+        ballotctl->>+ballotd: submit configuration over local control socket
         ballotd->>ballotd: validate configuration
         ballotd-->>-ballotctl: specific error, stays in 'draft'
         ballotctl-->>-Admin: show error (fix and retry)
     else valid config
         Admin->>+ballotctl: fill in configuration
-        ballotctl->>+ballotd: submit configuration
+        ballotctl->>+ballotd: submit configuration over local control socket
         ballotd->>ballotd: validate configuration
         ballotd->>+SimpleDB: insert ballotbox
         SimpleDB-->>-ballotd: insert success
@@ -115,14 +126,14 @@ sequenceDiagram
 | Description    | An eligible voter joins an open election instance.      |
 | Actors         | Voter                                                   |
 | Triggers       | Voter runs the join command.                            |
-| Preconditions  | Authenticated voter session (valid client cert).        |
+| Preconditions  | Authenticated voter account over a secure tetriSH session. |
 | Postconditions | Voter is admitted to the session and can cast a ballot. |
 
 **Flow**
 
-1. Voter enters the election details (admin IP, port, and election ID) in ballotu.
+1. Voter connects to ballotd, logs in or registers, and enters the election ID in ballotu.
 2. ballotu connects to ballotd; ballotd fetches the election from SimpleDB.
-3. ballotd checks the voter's cert against the eligible-voter list.
+3. ballotd checks the server-confirmed username against the eligible-voter list.
 4. ballotd confirms the election is 'open' and admits the voter to the session.
 5. ballotu displays the ballot options and confirms the voter has joined.
 
@@ -134,7 +145,7 @@ sequenceDiagram
 
 2a. ballotd unreachable (timeout / no route to host) → join failed.
 2b. Election not found → join failed.
-3a. Cert not on the eligible list → refused.
+3a. Authenticated username not on the eligible list → refused.
 
 ```mermaid
 sequenceDiagram
@@ -143,7 +154,7 @@ sequenceDiagram
     participant ballotd
     participant SimpleDB
 
-    note over Voter, SimpleDB: Precondition: authenticated voter session (valid client cert)
+    note over Voter, SimpleDB: Precondition: authenticated voter account over tetriSH
 
     alt admin IP/port not found or refuse to connect
         Voter->>+ballotu: enter election details
@@ -157,12 +168,12 @@ sequenceDiagram
         SimpleDB-->>-ballotd: election does not exist
         ballotd-->>-ballotu: election not found
         ballotu-->>-Voter: join failed, election not found
-    else cert not on eligible list
+    else username not on eligible list
         Voter->>+ballotu: enter election details
         ballotu->>+ballotd: connect to server
         ballotd->>+SimpleDB: fetch election
         SimpleDB-->>-ballotd: return election
-        ballotd-->>-ballotu: refused (not eligible)
+        ballotd-->>-ballotu: refused (username not eligible)
         ballotu-->>-Voter: show refusal (not eligible)
     else election not 'open'
         Voter->>+ballotu: enter election details
@@ -323,18 +334,18 @@ sequenceDiagram
 
 | Field          | Detail                                                                         |
 | -------------- | ------------------------------------------------------------------------------ |
-| Description    | Anyone views the published tally together with the list of ballot hashes.      |
-| Actors         | Observer                                                                       |
-| Triggers       | Observer runs the results command.                                             |
-| Preconditions  | Authenticated observer session (valid client cert).                            |
+| Description    | An eligible observer or the local admin views the published tally and ballot hashes. |
+| Actors         | Observer, Admin                                                                |
+| Triggers       | Observer or Admin runs the results command.                                    |
+| Preconditions  | Authenticated voter account, or access to ballotd's local admin socket.        |
 | Postconditions | The final tally and the full list of ballot verification hashes are displayed. |
 
 **Flow**
 
-1. Observer selects an election to view in ballotu.
-2. ballotd fetches the election from SimpleDB and checks the observer's eligibility to observe it.
+1. Observer selects an election in ballotu, or Admin enters an election ID in ballotctl.
+2. ballotd fetches the election from SimpleDB and checks observer eligibility. The local admin path bypasses the eligible-voter check.
 3. ballotd confirms the election is 'published' and returns the tally and the counted ballot hashes from SimpleDB.
-4. ballotu displays the tally and the hash list (grouped by option) so a voter can locate their own (UC-6).
+4. The selected client displays the tally and hash list, grouped by option.
 
 **Alternative Flows**
 
@@ -352,7 +363,7 @@ sequenceDiagram
     participant ballotd
     participant SimpleDB
 
-    note over Observer,ballotd: Precondition: authenticated observer session (valid client cert)
+    note over Observer,ballotd: Precondition: authenticated voter account; admin uses the local control socket
 
     alt Observer not eligible
         Observer->>+ballotu: select election
@@ -393,15 +404,15 @@ sequenceDiagram
 | Description    | A voter confirms their own ballot was counted, using their secret ballot key.           |
 | Actors         | Voter                                                                                   |
 | Triggers       | Voter runs the check command.                                                           |
-| Preconditions  | Voter holds a secret ballot key from UC-3/UC-4; results published.                      |
+| Preconditions  | Caller holds a secret ballot key from UC-3/UC-4.                                        |
 | Postconditions | Voter confirms inclusion of their ballot without revealing their choice to anyone else. |
 
 **Flow**
 
 1. Voter enters their secret ballot key in ballotu.
 2. ballotu derives the receipt hash from the key (hash function / KDF).
-3. ballotu sends the derived hash to ballotd to look up in the published result view.
-4. ballotd searches the published, non-superseded hashes in SimpleDB and confirms the hash is counted in the tally.
+3. ballotu sends the derived hash to ballotd to look up in the live ballot-hash set.
+4. ballotd searches the non-superseded hashes in SimpleDB. This lookup works before and after publication.
 5. ballotu reports the voter's ballot was included and shows their recorded choice.
 
 **Alternative Flows**
@@ -410,7 +421,7 @@ None.
 
 **Error States**
 
-4a. Derived hash not found in the published results → verification failed; ballotu flags it as a dropped ballot for the voter to raise with the Admin.
+4a. Derived hash not found in the live ballot-hash set → verification failed; ballotu flags it as a dropped ballot for the voter to raise with the Admin.
 
 ```mermaid
 sequenceDiagram
@@ -419,27 +430,44 @@ sequenceDiagram
     participant ballotd
     participant SimpleDB
 
-    note over Voter, SimpleDB: Precondition: holds a secret ballot key (UC-3/UC-4), results published
+    note over Voter, SimpleDB: Precondition: holds a secret ballot key (UC-3/UC-4)
 
     alt hash not found
         Voter->>+ballotu: enter secret ballot key
         ballotu->>ballotu: derive receipt hash from key (hash function / KDF)
-        ballotu->>+ballotd: look up derived hash in published result view
-        ballotd->>+SimpleDB: search published, non-superseded hashes
+        ballotu->>+ballotd: look up derived hash
+        ballotd->>+SimpleDB: search live, non-superseded hashes
         SimpleDB-->>-ballotd: hash not found
         ballotd-->>-ballotu: not found
         ballotu-->>-Voter: verification failed (dropped ballot), raise with Admin
     else hash found
         Voter->>+ballotu: enter secret ballot key
         ballotu->>ballotu: derive receipt hash from key (hash function / KDF)
-        ballotu->>+ballotd: look up derived hash in published result view
-        ballotd->>+SimpleDB: search published, non-superseded hashes
+        ballotu->>+ballotd: look up derived hash
+        ballotd->>+SimpleDB: search live, non-superseded hashes
         SimpleDB-->>-ballotd: hash found
         ballotd-->>-ballotu: found, counted in tally (with choice)
         ballotu-->>-Voter: ballot included and counted
         note over Voter,SimpleDB: Postcondition: inclusion confirmed without revealing the choice to anyone else
     end
 ```
+
+---
+
+### UC-7: Close Election
+
+The local administrator closes an `OPEN` election through `ballotctl` and ballotd's owner-only control socket.
+The successful transition persists `CLOSED`, after which both casts and updates are rejected without changing the live ballot set.
+Closing from `DRAFT`, `CLOSED`, or `PUBLISHED` is an illegal transition and leaves the stored state unchanged.
+
+### UC-8: Publish Results
+
+The local administrator publishes a `CLOSED` election through the same control socket.
+The successful transition persists terminal state `PUBLISHED` and exposes the final tally and live receipt hashes through UC-5.
+Publishing from `DRAFT`, `OPEN`, or `PUBLISHED` is an illegal transition and leaves the stored state unchanged.
+
+The legal lifecycle is `DRAFT -> OPEN -> CLOSED -> PUBLISHED`.
+Every other ordered transition, including a self-transition, is rejected.
 
 ---
 
@@ -475,9 +503,10 @@ classDiagram
     }
 
     class Ballot {
-        -optionIndex
+        -certName
         -nonce
         -encryptedPayload
+        -payloadLen
     }
 
     class BallotHash {
@@ -498,6 +527,23 @@ classDiagram
         -hasBallot
         -ballotVersion
         -myHash
+        -title
+        -options
+        -optionCount
+    }
+
+    class PublishedResults {
+        -title
+        -tally
+        -options
+        -ballotHashes
+    }
+
+    class BallotOwner {
+        -electionId
+        -certName
+        -currentHash
+        -version
     }
 
     class ElectionState {
@@ -527,13 +573,16 @@ classDiagram
     Observer "*" -- "*" Election : observes
     Election "1" *-- "*" Ballot : accepts
     Election "1" *-- "*" BallotHash : records
-    Ballot "1" -- "1" BallotHash : recorded as
-    BallotHash "1" -- "1" Receipt : issues
+    Election "1" -- "0..1" PublishedResults : publishes
+    Election "1" -- "*" BallotOwner : tracks privately
+    Ballot ..> BallotHash : produces
+    BallotHash ..> Receipt : returned as
     Election "1" -- "1" ElectionState : state
     Certificate "1" -- "1" CertStatus : status
 ```
 
-`BallotHash` is the only entity published in results, and it holds no voter identity: that is what makes the tally verifiable without making it traceable.
+`BallotHash` is the only per-ballot entity published in results, and it holds no voter identity.
+The store keeps the voter-to-current-hash association in the separate, private `BallotOwner` mapping used for updates.
 
 ### Solution Class Diagram: voter client (ballotu)
 
@@ -560,18 +609,21 @@ classDiagram
         -hasBallot: boolean
         -ballotVersion: int
         -myHash: String
+        -title: String
+        -options: List~String~
+        -optionCount: int
     }
 
     class VoterController {
-        +join(fd: VoterFormData) JoinOutcome
+        +join(session: VoterSession, electionId: String, username: String) JoinOutcome
         +routeVote(s: VoterSession) VoteAction
-        +castVote(s: VoterSession, fd: VoterFormData) Receipt
-        +updateVote(s: VoterSession, fd: VoterFormData) Receipt
-        +checkVote(fd: VoterFormData) CheckResult
+        +submitVote(s: VoterSession, optionIndex: int, nonce: String) Receipt
+        +deriveReceipt(secretKey: String) String
     }
 
     class ResultsController {
-        +viewResults(id: String, certName: String) ResultView
+        +buildResultsRequest(id: String, username: String) BallotRequest
+        +buildCheckRequest(id: String, hash: String) BallotRequest
     }
 
     class ClientCrypto {
@@ -580,7 +632,9 @@ classDiagram
     }
 
     class SecureSession {
-        +connect(host: String, port: int, cert: Certificate) ResultStatus
+        +connect(host: String, port: int, caPath: String) ResultStatus
+        +authenticate(method: String, username: String, password: String) int
+        +disconnect()
         +send(req: BallotRequest) BallotResponse
     }
 
@@ -597,10 +651,16 @@ classDiagram
         -status: ResultStatus
         -election: Election
         -receipt: Receipt
+        -hasPriorBallot: boolean
+        -priorBallotVersion: int
         -tally: List~int~
+        -optionCount: int
+        -options: List~String~
         -hashes: List~BallotHash~
+        -hashCount: int
         -found: boolean
         -foundOption: int
+        -foundOptionName: String
     }
 
     class ResultView {
@@ -608,9 +668,11 @@ classDiagram
         -hashes: List~BallotHash~
     }
 
-    class CheckResult {
-        -found: boolean
-        -optionIndex: int
+    class CheckOutcome {
+        <<enumeration>>
+        COUNTED
+        DROPPED
+        UNAVAILABLE
     }
 
     class VoteAction {
@@ -639,7 +701,7 @@ classDiagram
     VoterController ..> SecureSession : uses
     VoterController ..> VoteAction : returns
     VoterController ..> JoinOutcome : returns
-    VoterController ..> CheckResult : creates
+    VoterController ..> CheckOutcome : returns
     ResultsController ..> SecureSession : uses
     ResultsController ..> ResultView : creates
 
@@ -648,7 +710,9 @@ classDiagram
 ```
 
 An Observer views results through this same client, so `ResultsController` serves UC-5 for both voters and observers.
-`VoterController` and `ResultsController` are stateless: the session and the form data are passed in as arguments, never stored on the controller.
+`VoterController` represents the `bu_*` functions in `libballotclient`; it is not a stored C object.
+The executable keeps one `bcl_ctx` transport context and one `bu_session_t` voter session.
+Voter identity comes from the username confirmed by the server's LOGIN or REGISTER exchange.
 
 ### Solution Class Diagram: admin client (ballotctl)
 
@@ -669,15 +733,15 @@ classDiagram
     }
 
     class AdminController {
-        +validateConfig(cfg: ElectionConfig) ResultStatus
-        +createElection(cfg: ElectionConfig) String
-        +openElection(id: String) ResultStatus
-        +closeElection(id: String) ResultStatus
-        +publishResults(id: String) ResultStatus
+        +prevalidateConfig(cfg: ElectionConfig) ResultStatus
+        +buildCreate(cfg: ElectionConfig) BallotRequest
+        +buildTransition(op: RequestOp, id: String) BallotRequest
+        +foldEligible(names: List~String~) ResultStatus
     }
 
     class ResultsController {
-        +viewResults(id: String, certName: String) ResultView
+        +viewResults(id: String) ResultView
+        +checkHash(id: String, hash: String) CheckResult
     }
 
     class ElectionConfig {
@@ -689,8 +753,8 @@ classDiagram
         +isValid() ResultStatus
     }
 
-    class SecureSession {
-        +connect(host: String, port: int, cert: Certificate) ResultStatus
+    class AdminChannel {
+        +setControlPath(path: String)
         +send(req: BallotRequest) BallotResponse
     }
 
@@ -708,14 +772,24 @@ classDiagram
         -election: Election
         -receipt: Receipt
         -tally: List~int~
+        -optionCount: int
+        -options: List~String~
         -hashes: List~BallotHash~
+        -hashCount: int
         -found: boolean
         -foundOption: int
+        -foundOptionName: String
     }
 
     class ResultView {
         -tally: List~int~
         -hashes: List~BallotHash~
+    }
+
+    class CheckResult {
+        -found: boolean
+        -optionIndex: int
+        -optionName: String
     }
 
     class RequestOp {
@@ -729,6 +803,9 @@ classDiagram
         OPEN
         CLOSE
         PUBLISH
+        ADMIN_RESULTS
+        ADMIN_CHECK
+        ADMIN_NEXT_ID
     }
 
     AdminUI "1" -- "1" ElectionFormData : holds
@@ -737,24 +814,26 @@ classDiagram
     AdminUI ..> ResultsController : uses
 
     AdminController ..> ElectionConfig : creates
-    AdminController ..> SecureSession : uses
-    ResultsController ..> SecureSession : uses
+    AdminController ..> AdminChannel : uses
+    ResultsController ..> AdminChannel : uses
     ResultsController ..> ResultView : creates
 
-    SecureSession ..> BallotRequest : uses
-    SecureSession ..> BallotResponse : creates
+    AdminChannel ..> BallotRequest : uses
+    AdminChannel ..> BallotResponse : creates
     BallotRequest ..> RequestOp : uses
 ```
 
-`AdminController` holds no election of its own: the form data arrives as an `ElectionConfig` argument, is validated, and is passed straight to the request.
-`validateConfig` calls the daemon's own validator, so the config rules exist in exactly one place and the admin still sees the error before a round trip.
+`AdminController` holds no election of its own: it represents the `bc_*` request-building functions, not a stored C object.
+`prevalidateConfig` calls the daemon library's authoritative validator, so the config rules exist in one place and the admin sees errors before a round trip.
 
-`SecureSession`, `BallotRequest`, `BallotResponse`, `ResultsController`, and `ResultView` are one shared implementation (`libballotclient.a`) used by both clients; they appear in both diagrams so each stands on its own.
+`BallotRequest` and `BallotResponse` are shared protocol types from `libballotclient.a`.
+Unlike ballotu, ballotctl sends every request through a one-shot, owner-only AF_UNIX control socket and never opens a TCP/tetriSH voter session.
 
 ### Solution Class Diagram: daemon tier
 
 `ballotd` runs on the admin machine and is the only tier that touches the store.
-`SecureSession` in either client calls `BallotdService` across the network.
+ballotu reaches `BallotdService` through TCP/tetriSH after LOGIN or REGISTER.
+ballotctl reaches it through ballotd's local AF_UNIX control plane.
 
 ```mermaid
 classDiagram
@@ -762,10 +841,12 @@ classDiagram
         +verifyCert(certName: String) CertStatus
         +checkEligibility(e: Election, certName: String) boolean
         +validateConfig(cfg: ElectionConfig) ResultStatus
-        +createElection(cfg: ElectionConfig) String
-        +transitionState(id: String, from: ElectionState, to: ElectionState) ResultStatus
+        +createElection(cfg: ElectionConfig, desiredId: String) String
+        +transitionState(id: String, to: ElectionState) ResultStatus
         +recordBallot(id: String, b: Ballot) Receipt
         +publishResults(id: String) ResultStatus
+        +getResults(id: String, username: String) ResultView
+        +getResultsAdmin(id: String) ResultView
         +lookupHash(id: String, hash: String) BallotHash
     }
 
@@ -830,6 +911,7 @@ classDiagram
         -hashRow: BallotHash
         -hash: String
         -nonce: String
+        -certName: String
         -config: ElectionConfig
     }
 
@@ -853,6 +935,8 @@ classDiagram
         GET_HASHES
         FIND_HASH
         NONCE_SEEN
+        GET_PRIOR_BALLOT
+        SET_OWNER
     }
 
     class ElectionState {
@@ -877,6 +961,7 @@ classDiagram
         ERR_CONFIG_TITLE
         ERR_CONFIG_OPTIONS
         ERR_CONFIG_TIME
+        ERR_CONFIG_ID_TAKEN
         ERR_ILLEGAL_TRANSITION
         ERR_NOT_OPEN
         ERR_CLOSED
@@ -888,8 +973,10 @@ classDiagram
         ERR_REPLAY
         ERR_DECRYPT
         ERR_NOT_FOUND
+        ERR_NOT_JOINED
         ERR_DB
         ERR_NOT_IMPLEMENTED
+        ERR_RETRY
     }
 
     Election "1" *-- "*" BallotHash : records
