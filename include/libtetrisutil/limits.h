@@ -1,6 +1,8 @@
 #ifndef LIBTETRISUTIL_LIMITS_H
 #define LIBTETRISUTIL_LIMITS_H
 
+#include <sys/un.h>
+
 /*
  * limits.h - every capacity in tetriSH, in one place.
  *
@@ -35,9 +37,9 @@
  * Lower MAX_ROOM_MEMBERS if you want a real per-room cap - that is the whole
  * reason these three now sit three lines apart instead of in two files.
  */
-#define MAX_SESSIONS     254   /* concurrent client sessions        */
-#define MAX_ROOMS        254   /* concurrent rooms                  */
-#define MAX_ROOM_MEMBERS 254   /* players per room (raise to scale) */
+#define MAX_SESSIONS 254     /* concurrent client sessions        */
+#define MAX_ROOMS 254        /* concurrent rooms                  */
+#define MAX_ROOM_MEMBERS 254 /* players per room (raise to scale) */
 
 /* ---- what travels to a client ------------------------------------------- */
 /*
@@ -53,5 +55,18 @@
 
 /* Display name, including the terminating NUL. */
 #define MAX_PLAYER_NAME 16
+
+/* ---- what a directive can hold ------------------------------------------ */
+/*
+ * A unix socket path, including the terminating NUL.
+ *
+ * Every ipc directive lands in a buffer this size rather than PATH_MAX, so
+ * "too long to bind" is caught by the ordinary "too long for out" check in
+ * rc_get() instead of by a second length rule each reader carries. sun_path is
+ * The capacity is taken from this platform's sockaddr_un. Configuration is
+ * validated where it is consumed, so Linux can use all 107 pathname bytes
+ * without making a Linux-only valid configuration fail to load.
+ */
+#define MAX_IPC_PATH sizeof(((struct sockaddr_un *)0)->sun_path)
 
 #endif /* LIBTETRISUTIL_LIMITS_H */

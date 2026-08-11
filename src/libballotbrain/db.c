@@ -69,16 +69,16 @@
 
 /* ---- small helpers ------------------------------------------------------ */
 
-static bb_result_t map_status(tdb_status_t st) {
+static bb_result_t map_status(db_status_t st) {
   switch (st) {
-    case TDB_OK: return BB_OK;
-    case TDB_RETRY: return BB_ERR_RETRY;
+    case DB_OK: return BB_OK;
+    case DB_RETRY: return BB_ERR_RETRY;
     default: return BB_ERR_DB;
   }
 }
 
-static bb_result_t exec_stmt(tdb_socket_t *conn, const char *sql, char *body, size_t cap) {
-  return map_status(tdb_socket_exec(conn, sql, body, cap));
+static bb_result_t exec_stmt(db_socket_t *conn, const char *sql, char *body, size_t cap) {
+  return map_status(db_socket_exec(conn, sql, body, cap));
 }
 
 /* TAB/CR/LF would desynchronise every reply printed after this field - see
@@ -91,7 +91,7 @@ static int unsafe(const char *s) {
   return 0;
 }
 
-/* Bounded copy from a tdb_row_fields() slice (not NUL-terminated) into a
+/* Bounded copy from a db_row_fields() slice (not NUL-terminated) into a
  * fixed buffer. */
 static void field_copy(const char *f, size_t len, char *dst, size_t cap) {
   size_t n = len < cap - 1 ? len : cap - 1;
@@ -125,7 +125,7 @@ static int id_seq(const char *id) {
   return (int)v;
 }
 
-void bb_set_db_opts(bb_ctx *ctx, const tdb_socket_opts_t *opts) {
+void bb_set_db_opts(bb_ctx *ctx, const db_socket_opts_t *opts) {
   if (ctx == NULL || opts == NULL) {
     return;
   }
@@ -231,7 +231,7 @@ static void log_cmd(bb_ctx *ctx, const bb_db_cmd_t *cmd) {
   }
 }
 
-static bb_result_t run_insert_election(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cmd_t *cmd) {
+static bb_result_t run_insert_election(bb_ctx *ctx, db_socket_t *conn, const bb_db_cmd_t *cmd) {
   (void)ctx;
   if (cmd->config == NULL || unsafe(cmd->election_id) || unsafe(cmd->config->title) ||
       unsafe(cmd->config->open_time) || unsafe(cmd->config->close_time)) {
@@ -240,10 +240,10 @@ static bb_result_t run_insert_election(bb_ctx *ctx, tdb_socket_t *conn, const bb
   const bb_config_t *cfg = cmd->config;
 
   char qid[QUOTE_MAX], qtitle[QUOTE_MAX], qopen[QUOTE_MAX], qclose[QUOTE_MAX];
-  tdb_quote(qid, sizeof qid, cmd->election_id);
-  tdb_quote(qtitle, sizeof qtitle, cfg->title);
-  tdb_quote(qopen, sizeof qopen, cfg->open_time);
-  tdb_quote(qclose, sizeof qclose, cfg->close_time);
+  db_quote(qid, sizeof qid, cmd->election_id);
+  db_quote(qtitle, sizeof qtitle, cfg->title);
+  db_quote(qopen, sizeof qopen, cfg->open_time);
+  db_quote(qclose, sizeof qclose, cfg->close_time);
 
   char sql[SQL_MAX];
   snprintf(sql, sizeof sql,
@@ -259,7 +259,7 @@ static bb_result_t run_insert_election(bb_ctx *ctx, tdb_socket_t *conn, const bb
       return BB_ERR_DB;
     }
     char qopt[QUOTE_MAX];
-    tdb_quote(qopt, sizeof qopt, cfg->options[i]);
+    db_quote(qopt, sizeof qopt, cfg->options[i]);
     snprintf(sql, sizeof sql, "insert into " BB_DB_TABLE_OPTION " values (%s, %d, %s);", qid, i,
             qopt);
     r = exec_stmt(conn, sql, NULL, 0);
@@ -273,7 +273,7 @@ static bb_result_t run_insert_election(bb_ctx *ctx, tdb_socket_t *conn, const bb
       return BB_ERR_DB;
     }
     char qelig[QUOTE_MAX];
-    tdb_quote(qelig, sizeof qelig, cfg->eligible[i]);
+    db_quote(qelig, sizeof qelig, cfg->eligible[i]);
     snprintf(sql, sizeof sql, "insert into " BB_DB_TABLE_ELIGIBLE " values (%s, %s);", qid, qelig);
     r = exec_stmt(conn, sql, NULL, 0);
     if (r != BB_OK) {
@@ -283,7 +283,7 @@ static bb_result_t run_insert_election(bb_ctx *ctx, tdb_socket_t *conn, const bb
   return BB_OK;
 }
 
-static bb_result_t run_get_election(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cmd_t *cmd,
+static bb_result_t run_get_election(bb_ctx *ctx, db_socket_t *conn, const bb_db_cmd_t *cmd,
                                     bb_db_result_t *out) {
   (void)ctx;
   if (out == NULL) {
@@ -291,7 +291,7 @@ static bb_result_t run_get_election(bb_ctx *ctx, tdb_socket_t *conn, const bb_db
   }
 
   char qid[QUOTE_MAX];
-  tdb_quote(qid, sizeof qid, cmd->election_id);
+  db_quote(qid, sizeof qid, cmd->election_id);
 
   char sql[SQL_MAX], body[BODY_MAX];
   snprintf(sql, sizeof sql,
@@ -302,7 +302,7 @@ static bb_result_t run_get_election(bb_ctx *ctx, tdb_socket_t *conn, const bb_db
   if (r != BB_OK) {
     return r;
   }
-  int rows = tdb_row_count(body);
+  int rows = db_row_count(body);
   if (rows < 0) {
     return BB_ERR_DB;
   }
@@ -313,7 +313,7 @@ static bb_result_t run_get_election(bb_ctx *ctx, tdb_socket_t *conn, const bb_db
 
   const char *f[6];
   size_t len[6];
-  if (tdb_row_fields(body, 0, f, len, 6) < 6) {
+  if (db_row_fields(body, 0, f, len, 6) < 6) {
     return BB_ERR_DB;
   }
 
@@ -335,14 +335,14 @@ static bb_result_t run_get_election(bb_ctx *ctx, tdb_socket_t *conn, const bb_db
   if (r != BB_OK) {
     return r;
   }
-  int orows = tdb_row_count(body);
+  int orows = db_row_count(body);
   if (orows < 0) {
     orows = 0;
   }
   for (int i = 0; i < orows; i++) {
     const char *of[2];
     size_t olen[2];
-    if (tdb_row_fields(body, i, of, olen, 2) < 2) {
+    if (db_row_fields(body, i, of, olen, 2) < 2) {
       continue;
     }
     int idx = field_int(of[0], olen[0]);
@@ -358,14 +358,14 @@ static bb_result_t run_get_election(bb_ctx *ctx, tdb_socket_t *conn, const bb_db
   if (r != BB_OK) {
     return r;
   }
-  int erows = tdb_row_count(body);
+  int erows = db_row_count(body);
   if (erows < 0) {
     erows = 0;
   }
   for (int i = 0; i < erows && i < BB_MAX_VOTERS; i++) {
     const char *ef[1];
     size_t elen[1];
-    if (tdb_row_fields(body, i, ef, elen, 1) < 1) {
+    if (db_row_fields(body, i, ef, elen, 1) < 1) {
       continue;
     }
     field_copy(ef[0], elen[0], e.eligible[i], BB_CERT_LEN);
@@ -377,10 +377,10 @@ static bb_result_t run_get_election(bb_ctx *ctx, tdb_socket_t *conn, const bb_db
   return BB_OK;
 }
 
-static bb_result_t run_update_state(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cmd_t *cmd) {
+static bb_result_t run_update_state(bb_ctx *ctx, db_socket_t *conn, const bb_db_cmd_t *cmd) {
   (void)ctx;
   char qid[QUOTE_MAX];
-  tdb_quote(qid, sizeof qid, cmd->election_id);
+  db_quote(qid, sizeof qid, cmd->election_id);
 
   char sql[SQL_MAX], body[BODY_MAX];
   snprintf(sql, sizeof sql,
@@ -391,7 +391,7 @@ static bb_result_t run_update_state(bb_ctx *ctx, tdb_socket_t *conn, const bb_db
   if (r != BB_OK) {
     return r;
   }
-  if (tdb_row_count(body) <= 0) {
+  if (db_row_count(body) <= 0) {
     /* The caller (bb_transition_state) always reads the election back first
      * and only calls this when it exists; a miss here means it vanished
      * between those two reads, which nothing in this single-writer system
@@ -401,7 +401,7 @@ static bb_result_t run_update_state(bb_ctx *ctx, tdb_socket_t *conn, const bb_db
 
   const char *f[4];
   size_t len[4];
-  if (tdb_row_fields(body, 0, f, len, 4) < 4) {
+  if (db_row_fields(body, 0, f, len, 4) < 4) {
     return BB_ERR_DB;
   }
   char seq_text[24], title_raw[BB_TITLE_LEN], open_raw[BB_TIME_LEN], close_raw[BB_TIME_LEN];
@@ -417,24 +417,24 @@ static bb_result_t run_update_state(bb_ctx *ctx, tdb_socket_t *conn, const bb_db
   }
 
   char qtitle[QUOTE_MAX], qopen[QUOTE_MAX], qclose[QUOTE_MAX];
-  tdb_quote(qtitle, sizeof qtitle, title_raw);
-  tdb_quote(qopen, sizeof qopen, open_raw);
-  tdb_quote(qclose, sizeof qclose, close_raw);
+  db_quote(qtitle, sizeof qtitle, title_raw);
+  db_quote(qopen, sizeof qopen, open_raw);
+  db_quote(qclose, sizeof qclose, close_raw);
 
   snprintf(sql, sizeof sql, "insert into " BB_DB_TABLE_ELECTION " values (%s, %s, %s, '%s', %s, %s);",
           seq_text, qid, qtitle, bb_state_str(cmd->new_state), qopen, qclose);
   return exec_stmt(conn, sql, NULL, 0);
 }
 
-static bb_result_t run_append_ballot(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cmd_t *cmd) {
+static bb_result_t run_append_ballot(bb_ctx *ctx, db_socket_t *conn, const bb_db_cmd_t *cmd) {
   (void)ctx;
   if (cmd->hash_row == NULL) {
     return BB_ERR_DB;
   }
 
   char qid[QUOTE_MAX], qhash[QUOTE_MAX];
-  tdb_quote(qid, sizeof qid, cmd->election_id);
-  tdb_quote(qhash, sizeof qhash, cmd->hash_row->hash);
+  db_quote(qid, sizeof qid, cmd->election_id);
+  db_quote(qhash, sizeof qhash, cmd->hash_row->hash);
 
   char sql[SQL_MAX];
   snprintf(sql, sizeof sql, "insert into " BB_DB_TABLE_BALLOT " values (%s, %s, %d, %d, %d);", qid,
@@ -442,11 +442,11 @@ static bb_result_t run_append_ballot(bb_ctx *ctx, tdb_socket_t *conn, const bb_d
   return exec_stmt(conn, sql, NULL, 0);
 }
 
-static bb_result_t run_mark_superseded(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cmd_t *cmd) {
+static bb_result_t run_mark_superseded(bb_ctx *ctx, db_socket_t *conn, const bb_db_cmd_t *cmd) {
   (void)ctx;
   char qid[QUOTE_MAX], qhash[QUOTE_MAX];
-  tdb_quote(qid, sizeof qid, cmd->election_id);
-  tdb_quote(qhash, sizeof qhash, cmd->hash);
+  db_quote(qid, sizeof qid, cmd->election_id);
+  db_quote(qhash, sizeof qhash, cmd->hash);
 
   char sql[SQL_MAX], body[BODY_MAX];
   snprintf(sql, sizeof sql,
@@ -457,7 +457,7 @@ static bb_result_t run_mark_superseded(bb_ctx *ctx, tdb_socket_t *conn, const bb
   if (r != BB_OK) {
     return r;
   }
-  if (tdb_row_count(body) <= 0) {
+  if (db_row_count(body) <= 0) {
     /* record_ballot_locked passes the exact hash it just read via
      * GET_PRIOR_BALLOT, in the same transaction - a miss here is
      * infrastructure, never a caller error. */
@@ -466,7 +466,7 @@ static bb_result_t run_mark_superseded(bb_ctx *ctx, tdb_socket_t *conn, const bb
 
   const char *f[2];
   size_t len[2];
-  if (tdb_row_fields(body, 0, f, len, 2) < 2) {
+  if (db_row_fields(body, 0, f, len, 2) < 2) {
     return BB_ERR_DB;
   }
   char opt_text[24], ver_text[24];
@@ -485,23 +485,23 @@ static bb_result_t run_mark_superseded(bb_ctx *ctx, tdb_socket_t *conn, const bb
   return exec_stmt(conn, sql, NULL, 0);
 }
 
-static bb_result_t run_nonce_mark(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cmd_t *cmd) {
+static bb_result_t run_nonce_mark(bb_ctx *ctx, db_socket_t *conn, const bb_db_cmd_t *cmd) {
   (void)ctx;
   char qid[QUOTE_MAX], qnonce[QUOTE_MAX];
-  tdb_quote(qid, sizeof qid, cmd->election_id);
-  tdb_quote(qnonce, sizeof qnonce, cmd->nonce);
+  db_quote(qid, sizeof qid, cmd->election_id);
+  db_quote(qnonce, sizeof qnonce, cmd->nonce);
 
   char sql[SQL_MAX];
   snprintf(sql, sizeof sql, "insert into " BB_DB_TABLE_NONCE " values (%s, %s);", qid, qnonce);
   return exec_stmt(conn, sql, NULL, 0);
 }
 
-static bb_result_t run_set_owner(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cmd_t *cmd) {
+static bb_result_t run_set_owner(bb_ctx *ctx, db_socket_t *conn, const bb_db_cmd_t *cmd) {
   (void)ctx;
   char qid[QUOTE_MAX], qcert[QUOTE_MAX], qhash[QUOTE_MAX];
-  tdb_quote(qid, sizeof qid, cmd->election_id);
-  tdb_quote(qcert, sizeof qcert, cmd->cert_name);
-  tdb_quote(qhash, sizeof qhash, cmd->hash);
+  db_quote(qid, sizeof qid, cmd->election_id);
+  db_quote(qcert, sizeof qcert, cmd->cert_name);
+  db_quote(qhash, sizeof qhash, cmd->hash);
 
   char sql[SQL_MAX];
   snprintf(sql, sizeof sql,
@@ -517,7 +517,7 @@ static bb_result_t run_set_owner(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cm
   return exec_stmt(conn, sql, NULL, 0);
 }
 
-static bb_result_t run_get_tally(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cmd_t *cmd,
+static bb_result_t run_get_tally(bb_ctx *ctx, db_socket_t *conn, const bb_db_cmd_t *cmd,
                                  bb_db_result_t *out) {
   (void)ctx;
   if (out == NULL) {
@@ -525,7 +525,7 @@ static bb_result_t run_get_tally(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cm
   }
 
   char qid[QUOTE_MAX];
-  tdb_quote(qid, sizeof qid, cmd->election_id);
+  db_quote(qid, sizeof qid, cmd->election_id);
 
   char sql[SQL_MAX], body[BODY_MAX];
   snprintf(sql, sizeof sql,
@@ -536,14 +536,14 @@ static bb_result_t run_get_tally(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cm
   if (r != BB_OK) {
     return r;
   }
-  int rows = tdb_row_count(body);
+  int rows = db_row_count(body);
   if (rows < 0) {
     rows = 0;
   }
   for (int i = 0; i < rows; i++) {
     const char *f[1];
     size_t len[1];
-    if (tdb_row_fields(body, i, f, len, 1) < 1) {
+    if (db_row_fields(body, i, f, len, 1) < 1) {
       continue;
     }
     int idx = field_int(f[0], len[0]);
@@ -554,7 +554,7 @@ static bb_result_t run_get_tally(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cm
   return BB_OK;
 }
 
-static bb_result_t run_get_hashes(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cmd_t *cmd,
+static bb_result_t run_get_hashes(bb_ctx *ctx, db_socket_t *conn, const bb_db_cmd_t *cmd,
                                   bb_db_result_t *out) {
   (void)ctx;
   if (out == NULL) {
@@ -562,7 +562,7 @@ static bb_result_t run_get_hashes(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_c
   }
 
   char qid[QUOTE_MAX];
-  tdb_quote(qid, sizeof qid, cmd->election_id);
+  db_quote(qid, sizeof qid, cmd->election_id);
 
   char sql[SQL_MAX], body[BODY_MAX];
   snprintf(sql, sizeof sql,
@@ -573,7 +573,7 @@ static bb_result_t run_get_hashes(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_c
   if (r != BB_OK) {
     return r;
   }
-  int rows = tdb_row_count(body);
+  int rows = db_row_count(body);
   if (rows < 0) {
     rows = 0;
   }
@@ -581,7 +581,7 @@ static bb_result_t run_get_hashes(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_c
   for (int i = 0; i < rows && n < BB_MAX_VOTERS; i++) {
     const char *f[4];
     size_t len[4];
-    if (tdb_row_fields(body, i, f, len, 4) < 4) {
+    if (db_row_fields(body, i, f, len, 4) < 4) {
       continue;
     }
     bb_ballot_hash_t *row = &out->hashes[n];
@@ -595,7 +595,7 @@ static bb_result_t run_get_hashes(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_c
   return BB_OK;
 }
 
-static bb_result_t run_find_hash(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cmd_t *cmd,
+static bb_result_t run_find_hash(bb_ctx *ctx, db_socket_t *conn, const bb_db_cmd_t *cmd,
                                  bb_db_result_t *out) {
   (void)ctx;
   if (out == NULL) {
@@ -603,8 +603,8 @@ static bb_result_t run_find_hash(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cm
   }
 
   char qid[QUOTE_MAX], qhash[QUOTE_MAX];
-  tdb_quote(qid, sizeof qid, cmd->election_id);
-  tdb_quote(qhash, sizeof qhash, cmd->hash);
+  db_quote(qid, sizeof qid, cmd->election_id);
+  db_quote(qhash, sizeof qhash, cmd->hash);
 
   char sql[SQL_MAX], body[BODY_MAX];
   snprintf(sql, sizeof sql,
@@ -615,13 +615,13 @@ static bb_result_t run_find_hash(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cm
   if (r != BB_OK) {
     return r;
   }
-  if (tdb_row_count(body) <= 0) {
+  if (db_row_count(body) <= 0) {
     out->found = 0;
     return BB_OK;
   }
   const char *f[4];
   size_t len[4];
-  if (tdb_row_fields(body, 0, f, len, 4) < 4) {
+  if (db_row_fields(body, 0, f, len, 4) < 4) {
     return BB_ERR_DB;
   }
   field_copy(f[0], len[0], out->row.hash, BB_HASH_LEN);
@@ -632,7 +632,7 @@ static bb_result_t run_find_hash(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cm
   return BB_OK;
 }
 
-static bb_result_t run_nonce_seen(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cmd_t *cmd,
+static bb_result_t run_nonce_seen(bb_ctx *ctx, db_socket_t *conn, const bb_db_cmd_t *cmd,
                                   bb_db_result_t *out) {
   (void)ctx;
   if (out == NULL) {
@@ -640,8 +640,8 @@ static bb_result_t run_nonce_seen(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_c
   }
 
   char qid[QUOTE_MAX], qnonce[QUOTE_MAX];
-  tdb_quote(qid, sizeof qid, cmd->election_id);
-  tdb_quote(qnonce, sizeof qnonce, cmd->nonce);
+  db_quote(qid, sizeof qid, cmd->election_id);
+  db_quote(qnonce, sizeof qnonce, cmd->nonce);
 
   char sql[SQL_MAX], body[BODY_MAX];
   snprintf(sql, sizeof sql, "select nonce from " BB_DB_TABLE_NONCE " where election_id = %s and nonce = %s;",
@@ -650,11 +650,11 @@ static bb_result_t run_nonce_seen(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_c
   if (r != BB_OK) {
     return r;
   }
-  out->found = tdb_row_count(body) > 0 ? 1 : 0;
+  out->found = db_row_count(body) > 0 ? 1 : 0;
   return BB_OK;
 }
 
-static bb_result_t run_get_prior_ballot(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cmd_t *cmd,
+static bb_result_t run_get_prior_ballot(bb_ctx *ctx, db_socket_t *conn, const bb_db_cmd_t *cmd,
                                         bb_db_result_t *out) {
   (void)ctx;
   if (out == NULL) {
@@ -662,8 +662,8 @@ static bb_result_t run_get_prior_ballot(bb_ctx *ctx, tdb_socket_t *conn, const b
   }
 
   char qid[QUOTE_MAX], qcert[QUOTE_MAX];
-  tdb_quote(qid, sizeof qid, cmd->election_id);
-  tdb_quote(qcert, sizeof qcert, cmd->cert_name);
+  db_quote(qid, sizeof qid, cmd->election_id);
+  db_quote(qcert, sizeof qcert, cmd->cert_name);
 
   char sql[SQL_MAX], body[BODY_MAX];
   snprintf(sql, sizeof sql,
@@ -673,13 +673,13 @@ static bb_result_t run_get_prior_ballot(bb_ctx *ctx, tdb_socket_t *conn, const b
   if (r != BB_OK) {
     return r;
   }
-  if (tdb_row_count(body) <= 0) {
+  if (db_row_count(body) <= 0) {
     out->found = 0;
     return BB_OK;
   }
   const char *f[2];
   size_t len[2];
-  if (tdb_row_fields(body, 0, f, len, 2) < 2) {
+  if (db_row_fields(body, 0, f, len, 2) < 2) {
     return BB_ERR_DB;
   }
   field_copy(f[0], len[0], out->row.hash, BB_HASH_LEN);
@@ -688,7 +688,7 @@ static bb_result_t run_get_prior_ballot(bb_ctx *ctx, tdb_socket_t *conn, const b
   return BB_OK;
 }
 
-static bb_result_t run_op(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cmd_t *cmd,
+static bb_result_t run_op(bb_ctx *ctx, db_socket_t *conn, const bb_db_cmd_t *cmd,
                           bb_db_result_t *out) {
   switch (cmd->op) {
     case BB_DB_INSERT_ELECTION: return run_insert_election(ctx, conn, cmd);
@@ -713,8 +713,8 @@ static bb_result_t run_op(bb_ctx *ctx, tdb_socket_t *conn, const bb_db_cmd_t *cm
  * a fresh connection. */
 static bb_result_t one_shot_attempt(bb_ctx *ctx, const bb_db_cmd_t *cmd, bb_db_result_t *out,
                                     int is_write) {
-  tdb_socket_opts_t opts = bb_effective_db_opts(ctx);
-  tdb_socket_t *conn = tdb_socket_open(&opts);
+  db_socket_opts_t opts = bb_effective_db_opts(ctx);
+  db_socket_t *conn = db_socket_open(&opts);
   if (conn == NULL) {
     return BB_ERR_DB;
   }
@@ -732,12 +732,12 @@ static bb_result_t one_shot_attempt(bb_ctx *ctx, const bb_db_cmd_t *cmd, bb_db_r
     } else if (r != BB_ERR_RETRY) {
       /* Intent, not a requirement: closing rolls back anything left open
        * regardless (see bb_db_rollback's own comment). */
-      (void)tdb_socket_exec(conn, "rollback;", NULL, 0);
+      (void)db_socket_exec(conn, "rollback;", NULL, 0);
     }
     /* r == BB_ERR_RETRY: the transaction is already gone server-side - no
      * rollback of it is possible or needed. */
   }
-  tdb_socket_close(conn);
+  db_socket_close(conn);
   return r;
 }
 

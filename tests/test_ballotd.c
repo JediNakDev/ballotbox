@@ -43,7 +43,7 @@
  * LIVE_* is the shared project default (var/db, var/run/tetrisdb.sock), NOT
  * a sandbox of this file's own, unlike every other db_dir/db_sock pair in
  * this codebase. That is not a style slip: ballotd's own db_exec honours
- * whatever -d/-i this file passes it, but libtetrisauth's tauth_login() -
+ * whatever -d/-i this file passes it, but libtetrisauth's auth_login() -
  * which every voter-channel test now goes through first, since JOIN/CAST/
  * etc. are unreachable pre-auth - reads db_ipc/db_dir from .tetrishrc via
  * auth_conf_load(), with no override this file can reach. Sandboxing
@@ -57,8 +57,8 @@
  * isolation from manual testing starts to matter more than it does today. */
 #define UNREACH_DB_DIR "var/db/test_ballotd_unreachable"
 #define UNREACH_DB_SOCK "var/run/test_ballotd_unreachable.sock"
-#define LIVE_DB_DIR TDB_DEFAULT_DIR
-#define LIVE_DB_SOCK TDB_DEFAULT_IPC
+#define LIVE_DB_DIR DB_DEFAULT_DIR
+#define LIVE_DB_SOCK DB_DEFAULT_IPC
 #define TEST_JAR "db/dist/simpledb.jar"
 #define TEST_PASSWORD "correcthorsebatterystaple"
 
@@ -182,7 +182,7 @@ static int voter_send_recv(session_t *cli, const uint8_t *wire, uint32_t wlen, u
   return htttp_parse_response(rbuf, rlen, http) == HTTTP_OK ? 0 : -1;
 }
 
-/* One raw LOGIN or REGISTER, answered by ballotd/session.c's tauth_login()
+/* One raw LOGIN or REGISTER, answered by ballotd/session.c's auth_login()
  * call - this file has no bcl_ctx (it drives session_t directly), so it
  * cannot reuse libballotclient's bcl_auth() and builds the same wire shape
  * by hand instead. Returns the HTTTP status, or -1 on a transport failure. */
@@ -283,7 +283,7 @@ static bb_config_t valid_config(const char *title) {
  * refused - this is the actual enforcement of "only ballotctl manages
  * elections", not a permission check inside the domain logic. Needs a live
  * store now: every voter-channel request, CREATE included, is unreachable
- * until tauth_login()'s pre-auth exchange resolves, and that needs a real
+ * until auth_login()'s pre-auth exchange resolves, and that needs a real
  * account DB - see LIVE_DB_DIR's comment above. */
 static int test_voter_handshake_and_wrong_channel_rejected(void) {
   pid_t pid = start_ballotd_live();
@@ -526,7 +526,7 @@ static int test_create_then_join_round_trips(void) {
   jreq.op = BCL_JOIN;
   snprintf(jreq.election_id, BB_ID_LEN, "%s", cresp.election.id);
   /* cert_name left blank on purpose: ballotd now overwrites it with the
-   * tauth_login()-verified identity (see session.c) regardless of what a
+   * auth_login()-verified identity (see session.c) regardless of what a
    * request carries, so "alice" here would be misleading - it is
    * voter_connect_as()'s job, not this field's, to say who this is. */
 
@@ -703,12 +703,12 @@ static int have_java(void) {
  * runner a manually-run ballotd/ballotctl/ballotu would be using) is left
  * alone rather than fought over. */
 static int start_live_runner(void) {
-  if (tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_ELECTION, BB_DB_SCHEMA_ELECTION) != 0 ||
-      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_OPTION, BB_DB_SCHEMA_OPTION) != 0 ||
-      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_ELIGIBLE, BB_DB_SCHEMA_ELIGIBLE) != 0 ||
-      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_BALLOT, BB_DB_SCHEMA_BALLOT) != 0 ||
-      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_OWNER, BB_DB_SCHEMA_OWNER) != 0 ||
-      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_NONCE, BB_DB_SCHEMA_NONCE) != 0) {
+  if (db_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_ELECTION, BB_DB_SCHEMA_ELECTION) != 0 ||
+      db_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_OPTION, BB_DB_SCHEMA_OPTION) != 0 ||
+      db_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_ELIGIBLE, BB_DB_SCHEMA_ELIGIBLE) != 0 ||
+      db_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_BALLOT, BB_DB_SCHEMA_BALLOT) != 0 ||
+      db_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_OWNER, BB_DB_SCHEMA_OWNER) != 0 ||
+      db_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_NONCE, BB_DB_SCHEMA_NONCE) != 0) {
     fprintf(stderr, "test_ballotd: fixture: failed to provision tables\n");
     return -1;
   }
@@ -719,12 +719,12 @@ static int start_live_runner(void) {
   int start_rc = system("./bin/tetrisdb start >/dev/null 2>&1");
   (void)start_rc;
 
-  tdb_socket_opts_t sopts;
-  tdb_socket_opts_default(&sopts);
+  db_socket_opts_t sopts;
+  db_socket_opts_load(&sopts);
   for (int i = 0; i < 100; i++) {
-    tdb_socket_t *probe = tdb_socket_open(&sopts);
+    db_socket_t *probe = db_socket_open(&sopts);
     if (probe != NULL) {
-      tdb_socket_close(probe);
+      db_socket_close(probe);
       return 0;
     }
     nap(100);

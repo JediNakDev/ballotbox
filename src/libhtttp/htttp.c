@@ -246,8 +246,9 @@ int htttp_parse_request(const uint8_t *buf, uint32_t len, htttp_request_t *req)
         return HTTTP_ERR_MALFORMED;
 
     /* eol + 2 skips the CRLF, landing on the first header byte. */
-    return parse_tail(buf, len, eol + 2, req->headers, &req->n_headers,
-                      &req->body, &req->body_len);
+    int status = parse_tail(buf, len, eol + 2, req->headers, &req->n_headers,
+                            &req->body, &req->body_len);
+    return status;
 }
 
 /* Mirror: parse one complete response. */
@@ -293,8 +294,9 @@ int htttp_parse_response(const uint8_t *buf, uint32_t len,
      * ("Not Found"), and htttp_reason() is the single source of truth for
      * phrases. Requiring the space to exist is the whole validation. */
 
-    return parse_tail(buf, len, eol + 2, res->headers, &res->n_headers,
-                      &res->body, &res->body_len);
+    int parsed = parse_tail(buf, len, eol + 2, res->headers, &res->n_headers,
+                            &res->body, &res->body_len);
+    return parsed;
 }
 
 /* --- Serializing ---------------------------------------------------------- */
@@ -395,8 +397,8 @@ static int emit_headers(uint8_t *out, size_t cap, size_t *off,
 
 /* Generated Content-Length (only when there is a body), the blank line ending
  * the header block, then the body. Shared by both serializers. */
-static int emit_body(uint8_t *out, size_t cap, size_t *off,
-                     const uint8_t *body, uint32_t body_len)
+static int emit_body(uint8_t *out, size_t cap, size_t *off, const uint8_t *body,
+                     uint32_t body_len)
 {
     int rc;
     if (body_len > 0)
@@ -602,6 +604,8 @@ const char *htttp_reason(int status)
         return "Too Many Requests";
     case 500:
         return "Internal Server Error";
+    case 501:
+        return "Not Implemented";
     default:
         return NULL;
     }

@@ -244,9 +244,9 @@ need `java` + the built jar and skip visibly without them.
 | Test | Detail |
 | --- | --- |
 | `creates catalog entry and one-page data file` | Fresh table is exactly one 4096-byte page |
-| `second create leaves existing table alone` | `tdb_ensure_table` is idempotent, no truncation |
+| `second create leaves existing table alone` | `db_ensure_table` is idempotent, no truncation |
 | `refuses to run without a data directory` | No dir configured → clean refusal |
-| `quotes plain text` | `tdb_quote` wraps a plain string |
+| `quotes plain text` | `db_quote` wraps a plain string |
 | `doubles embedded quotes` | `it's` → `'it''s'` |
 | `keeps an injection payload inside one literal` | SQL injection payload stays one closed literal |
 | `truncates without breaking the literal` | Worst-case quote doubling still fits the buffer, still closed |
@@ -258,10 +258,10 @@ need `java` + the built jar and skip visibly without them.
 | `gives up waiting for a runner that is not coming` | Startup deadline is honoured |
 | `fails at once when no runner is listening` | No retry storm against a dead socket |
 | `gives up on a connection that is never greeted` | Missing `<<READY>>` → clean timeout |
-| `keeps returning TDB_TIMEOUT once the deadline has passed` | Deadline is sticky, not re-armed per call |
-| `reports a deadlock abort as TDB_RETRY, not an error` | Deadlock victim is a distinct, retryable outcome |
+| `keeps returning DB_TIMEOUT once the deadline has passed` | Deadline is sticky, not re-armed per call |
+| `reports a deadlock abort as DB_RETRY, not an error` | Deadlock victim is a distinct, retryable outcome |
 | `returns the body of a rejected statement` | Error body is preserved for the caller |
-| `reports a runner that hangs up as TDB_IO` | Peer disconnect mid-exchange is its own status |
+| `reports a runner that hangs up as DB_IO` | Peer disconnect mid-exchange is its own status |
 | `refuses a statement carrying a newline` | Multi-statement injection via embedded newline is refused |
 | `writes rows and reads them back after restart` | Data survives a clean runner restart |
 | `counts a rejected statement and keeps going` | One bad statement doesn't kill the connection |
@@ -341,7 +341,7 @@ need `java` + the built jar and skip visibly without them.
 | `refuses a secret shorter than the hash output` | Weak secret length rejected at mint time |
 | `refuses an output buffer too small` | Undersized output buffer is a clean refusal, not an overflow |
 
-### `test_auth.c` — `libtetrisauth` entry point (`tauth_login`/`tauth_offer`)
+### `test_auth.c` — `libtetrisauth` entry point (`auth_login`/`auth_offer`)
 
 | Test | Detail |
 | --- | --- |

@@ -75,7 +75,8 @@ int send_all(int sockfd, const unsigned char *buf, uint64_t length)
     uint64_t total_sent = 0;
     while (total_sent < length)
     {
-        ssize_t n = send(sockfd, buf + total_sent, (size_t)(length - total_sent), 0);
+        ssize_t n =
+            send(sockfd, buf + total_sent, (size_t)(length - total_sent), 0);
         if (n <= 0)
         {
             perror("send");
@@ -230,9 +231,8 @@ cleanup:
  * RSA-PSS signing and verification
  * ====================================================================== */
 
-unsigned char *sign_message_pss(EVP_PKEY *priv_key,
-                                const unsigned char *msg, size_t msg_len,
-                                size_t *sig_len)
+unsigned char *sign_message_pss(EVP_PKEY *priv_key, const unsigned char *msg,
+                                size_t msg_len, size_t *sig_len)
 {
     /**
      * Signs a message using RSA-PSS with SHA-256 and maximum salt length.
@@ -244,7 +244,8 @@ unsigned char *sign_message_pss(EVP_PKEY *priv_key,
 
     EVP_PKEY_CTX *pkey_ctx = NULL;
 
-    if (EVP_DigestSignInit(md_ctx, &pkey_ctx, EVP_sha256(), NULL, priv_key) <= 0)
+    if (EVP_DigestSignInit(md_ctx, &pkey_ctx, EVP_sha256(), NULL, priv_key) <=
+        0)
         goto fail;
 
     /* Set PSS padding with MGF1-SHA256 and max salt */
@@ -278,8 +279,7 @@ fail:
     return sig;
 }
 
-int verify_message_pss(X509 *cert,
-                       const unsigned char *sig, size_t sig_len,
+int verify_message_pss(X509 *cert, const unsigned char *sig, size_t sig_len,
                        const unsigned char *msg, size_t msg_len)
 {
     /**
@@ -299,7 +299,8 @@ int verify_message_pss(X509 *cert,
 
     EVP_PKEY_CTX *pkey_ctx = NULL;
 
-    if (EVP_DigestVerifyInit(md_ctx, &pkey_ctx, EVP_sha256(), NULL, pub_key) <= 0)
+    if (EVP_DigestVerifyInit(md_ctx, &pkey_ctx, EVP_sha256(), NULL, pub_key) <=
+        0)
         goto done;
     if (EVP_PKEY_CTX_set_rsa_padding(pkey_ctx, RSA_PKCS1_PSS_PADDING) <= 0)
         goto done;
@@ -322,9 +323,9 @@ done:
  * RSA encryption / decryption
  * ====================================================================== */
 
-unsigned char *rsa_encrypt_block(EVP_PKEY *pub_key,
-                                 const unsigned char *plain, size_t plain_len,
-                                 size_t *out_len, int use_oaep)
+unsigned char *rsa_encrypt_block(EVP_PKEY *pub_key, const unsigned char *plain,
+                                 size_t plain_len, size_t *out_len,
+                                 int use_oaep)
 {
     /**
      * Encrypts a single plaintext block with RSA.
@@ -465,7 +466,8 @@ unsigned char *session_encrypt(const unsigned char key[SESSION_KEY_LEN],
         return NULL;
     }
 
-    /* Allocate output: IV + ciphertext (at most plain_len + AES_BLOCK for padding) + HMAC */
+    /* Allocate output: IV + ciphertext (at most plain_len + AES_BLOCK for
+     * padding) + HMAC */
     size_t max_ct_len = plain_len + AES_BLOCK; /* worst case with padding */
     size_t max_out = AES_IV_LEN + max_ct_len + HMAC_LEN;
     unsigned char *output = malloc(max_out);
@@ -502,9 +504,8 @@ unsigned char *session_encrypt(const unsigned char key[SESSION_KEY_LEN],
     /* Compute HMAC-SHA256 over (IV || ciphertext) */
     unsigned int hmac_out_len = 0;
     unsigned char *hmac_ptr = output + AES_IV_LEN + total_ct;
-    if (!HMAC(EVP_sha256(), hmac_key, HMAC_KEY_LEN,
-              output, AES_IV_LEN + total_ct,
-              hmac_ptr, &hmac_out_len))
+    if (!HMAC(EVP_sha256(), hmac_key, HMAC_KEY_LEN, output,
+              AES_IV_LEN + total_ct, hmac_ptr, &hmac_out_len))
     {
         print_ssl_error("session_encrypt: HMAC");
         free(output);
@@ -526,7 +527,8 @@ unsigned char *session_decrypt(const unsigned char key[SESSION_KEY_LEN],
     const unsigned char *hmac_key = key;
     const unsigned char *aes_key = key + HMAC_KEY_LEN;
 
-    /* Minimum token size: IV (16) + at least 1 block ciphertext (16) + HMAC (32) = 64 */
+    /* Minimum token size: IV (16) + at least 1 block ciphertext (16) + HMAC
+     * (32) = 64 */
     if (token_len < AES_IV_LEN + AES_BLOCK + HMAC_LEN)
     {
         fprintf(stderr, "session_decrypt: token too short\n");
@@ -541,8 +543,7 @@ unsigned char *session_decrypt(const unsigned char key[SESSION_KEY_LEN],
     /* Verify HMAC over (IV || ciphertext) */
     unsigned char hmac_computed[HMAC_LEN];
     unsigned int hmac_out_len = 0;
-    if (!HMAC(EVP_sha256(), hmac_key, HMAC_KEY_LEN,
-              token, AES_IV_LEN + ct_len,
+    if (!HMAC(EVP_sha256(), hmac_key, HMAC_KEY_LEN, token, AES_IV_LEN + ct_len,
               hmac_computed, &hmac_out_len))
     {
         print_ssl_error("session_decrypt: HMAC compute");
@@ -555,7 +556,8 @@ unsigned char *session_decrypt(const unsigned char key[SESSION_KEY_LEN],
     }
 
     /* Decrypt AES-128-CBC */
-    unsigned char *plain = malloc(ct_len); /* at most ct_len bytes after removing padding */
+    unsigned char *plain =
+        malloc(ct_len); /* at most ct_len bytes after removing padding */
     if (!plain)
         return NULL;
 

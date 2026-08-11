@@ -13,7 +13,7 @@
  *
  * One deliberate duplicate remains. src/libtetrisauth/jwt.c keeps its own
  * static copy, because it may include nothing outside OpenSSL - the assertion
- * bin/test_jwt exists to enforce.
+ * bin/tests/test_jwt exists to enforce.
  */
 
 #include "libtetrisutil/limits.h"
@@ -30,7 +30,7 @@
  *
  * One predicate rather than three exclusions. LF would break the credential
  * body's field split, TAB would shift every field of a tab-separated select
- * reply, and a quote would survive tdb_quote()'s doubling into storage as
+ * reply, and a quote would survive db_quote()'s doubling into storage as
  * o''brien - but a reader need not hold those three facts.
  *
  * @param c  Character to test.

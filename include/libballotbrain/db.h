@@ -23,7 +23,7 @@
  *     bb_db_commit()/bb_db_rollback() ends it and closes. A db_exec() call
  *     made with no transaction open uses its own one-shot connection, as
  *     above.
- *   - TDB_RETRY (a deadlock victim, not an error) surfaces as BB_ERR_RETRY.
+ *   - DB_RETRY (a deadlock victim, not an error) surfaces as BB_ERR_RETRY.
  *     The whole transaction is the retry unit - see bb_db_begin()'s doc
  *     comment - so only a caller that owns the begin/commit sequence may
  *     see this code; it must never reach the daemon boundary.
@@ -41,12 +41,12 @@
 struct bb_ctx;
 
 /*
- * The catalog lines ballotd must ensure (tdb_ensure_table) before bin/
+ * The catalog lines ballotd must ensure (db_ensure_table) before bin/
  * tetrisdb start ever runs against this data directory - same precedent as
  * TETRISAUTH_DB_TABLE/SCHEMA in include/libtetrisauth/provision.h, and for
  * the same reason: the schema text lives beside db.c, its only parser, so a
  * column reordered in one file cannot silently disagree with the positional
- * tdb_row_fields() reads here. See db.c's file comment for the full schema
+ * db_row_fields() reads here. See db.c's file comment for the full schema
  * design (why six tables, not fewer).
  */
 #define BB_DB_TABLE_ELECTION "election"
@@ -75,7 +75,7 @@ struct bb_ctx;
  * alone) falls back to libtetrisdb/socket/conf.h's defaults, which is enough
  * for a dev checkout with bin/tetrisdb running on its own defaults.
  */
-void bb_set_db_opts(struct bb_ctx *ctx, const tdb_socket_opts_t *opts);
+void bb_set_db_opts(struct bb_ctx *ctx, const db_socket_opts_t *opts);
 
 typedef enum {
   BB_DB_INSERT_ELECTION,  /* write: persist a new election in DRAFT */

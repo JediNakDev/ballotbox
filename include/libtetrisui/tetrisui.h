@@ -32,15 +32,16 @@ void tetrisui_draw_status_bar(const char *hint);
 /* Arrow-key menu; returns the selected index, or -1 if the user pressed
  * 'q'/ESC. Also -1 when count <= 0 or count > TETRISUI_MAX_ITEMS. */
 int tetrisui_menu(const char *title, const char *items[], int count,
-             const char *hint);
+                  const char *hint);
 
 /* single-line text input; returns 0 on ok, -1 if cancelled (ESC) */
-int tetrisui_input(const char *title, const char *prompt, char *out, int out_len);
+int tetrisui_input(const char *title, const char *prompt, char *out,
+                   int out_len);
 
 /* multi-field form; labels[count], values[count] pre-filled/edited in place.
  * returns 0 if submitted, -1 if cancelled (ESC) */
 int tetrisui_form(const char *title, const char *labels[],
-             char values[][TETRISUI_FIELD_LEN], int count);
+                  char values[][TETRISUI_FIELD_LEN], int count);
 
 /*
  * Extended form: adds what a re-opened, refused form needs and tetrisui_form()
@@ -59,8 +60,8 @@ int tetrisui_form(const char *title, const char *labels[],
  * tetrisui_form() is this with mask 0, error NULL, start_field 0.
  */
 int tetrisui_form_ex(const char *title, const char *labels[],
-             char values[][TETRISUI_FIELD_LEN], int count,
-             unsigned mask, const char *error, int start_field);
+                     char values[][TETRISUI_FIELD_LEN], int count,
+                     unsigned mask, const char *error, int start_field);
 
 /* yes/no confirmation; returns 1 for yes, 0 for no (ESC and 'q' mean no) */
 int tetrisui_confirm(const char *title, const char *question);
@@ -85,7 +86,8 @@ void tetrisui_progress(const char *title, const char *steps[], int step_count);
  * does fail (SESSION_ERR_AUTH on a forged cert), and an animation that always
  * prints OK would lie about it.
  */
-void tetrisui_progress_begin(const char *title, const char *steps[], int step_count);
+void tetrisui_progress_begin(const char *title, const char *steps[],
+                             int step_count);
 void tetrisui_progress_step(int index, int ok);
 void tetrisui_progress_end(void);
 

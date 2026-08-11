@@ -65,24 +65,24 @@ comparable, and the next fix has to be ported by hand instead of copied.
 worth imitating.
 Behind eight functions sit a spawned JVM, two pipes, a line protocol with no
 request ids, a lock, a bounded queue, and a worker thread.
-The caller learns `tdb_submit(db, sql)` and gets all of it.
+The caller learns `db_submit(db, sql)` and gets all of it.
 
 Its interface carries three facts that are not visible in the signatures, and
 each one is load-bearing:
 
 1. **Exactly one thread may drive the pipe.**
    The protocol has no request ids, so two writers interleave on the wire.
-   Rather than telling every caller to serialise, `tdb_submit` is a queue push
+   Rather than telling every caller to serialise, `db_submit` is a queue push
    callable from anywhere and a private worker is the only thing that ever sees
    the pipe.
 2. **A table is owned by one process.**
    Each PipeRunner caches pages in a private BufferPool with no cross-process
    invalidation.
-   This is why `tdb_opts_default` refuses to invent a directory: a shared
+   This is why `db_opts_default` refuses to invent a directory: a shared
    default is a corruption waiting to happen, so naming the directory is the
    caller's decision and an unnamed one is an error.
 3. **The submit path never blocks and never fails loudly.**
-   A wedged child costs dropped statements, counted in `tdb_dropped()`, not a
+   A wedged child costs dropped statements, counted in `db_dropped()`, not a
    stalled daemon.
 
 That third point is what makes the module deep rather than merely large.
@@ -90,7 +90,7 @@ The alternative interface - expose the pipe, let callers handle back-pressure -
 would be smaller to implement and much worse to use, because every caller would
 have to re-derive the same policy and some would get it wrong.
 
-`tdb_start`'s `probe` parameter is the one place the interface bends, and it is
+`db_start`'s `probe` parameter is the one place the interface bends, and it is
 worth naming as a deliberate trade.
 It exists because a daemon sometimes needs to *read* the table it is about to
 write - a sequence counter, a high-water mark - and the only moment that is
@@ -221,7 +221,7 @@ The interface is the test surface.
 Where a test wants to reach past an interface, that is evidence the module is
 the wrong shape, not a reason for a back door.
 
-- `tests/test_db.c` drives `libtetrisdb` through `tdb_*` and spawns a real
+- `tests/test_db.c` drives `libtetrisdb` through `db_*` and spawns a real
   PipeRunner.
   It skips the child-process cases when java or the jar is absent, so the
   module stays testable on a machine with no JVM.
@@ -236,12 +236,12 @@ the wrong shape, not a reason for a back door.
 
 ## Open questions
 
-- `logd_opts_t` embeds `tdb_opts_t`, so `tetrislogd`'s interface leaks
+- `logd_opts_t` embeds `db_opts_t`, so `tetrislogd`'s interface leaks
   `libtetrisdb`'s.
   Defensible today, since mirroring is a first-class feature rather than a
   plugin, but if a second sink ever appears the right shape is a sink interface
   with the database behind it.
-- `tdb_quote` is on the public interface because callers build their own SQL.
+- `db_quote` is on the public interface because callers build their own SQL.
   A statement builder that made quoting unskippable would be deeper, and would
   remove the one place a caller can still get injection wrong.
 - The system programs' "no libraries" link rule keeps them simple and keeps

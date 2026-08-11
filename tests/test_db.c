@@ -112,7 +112,7 @@ static int slurp(const char *path, char *buf, size_t cap) {
 
 static int test_creates_table(void) {
   reset_dir();
-  CHECK(tdb_ensure_table(TEST_DIR, "log", TEST_SCHEMA) == 0, "create failed");
+  CHECK(db_ensure_table(TEST_DIR, "log", TEST_SCHEMA) == 0, "create failed");
 
   char catalog[1024];
   CHECK(slurp(TEST_DIR "/catalog.txt", catalog, sizeof(catalog)) == 0,
@@ -128,7 +128,7 @@ static int test_creates_table(void) {
 
 static int test_create_is_idempotent(void) {
   reset_dir();
-  CHECK(tdb_ensure_table(TEST_DIR, "log", TEST_SCHEMA) == 0, "first failed");
+  CHECK(db_ensure_table(TEST_DIR, "log", TEST_SCHEMA) == 0, "first failed");
 
   /* Put a byte in the data file so truncation would be visible. */
   int fd = open(TEST_DIR "/log.dat", O_WRONLY);
@@ -136,7 +136,7 @@ static int test_create_is_idempotent(void) {
   CHECK(write(fd, "x", 1) == 1, "cannot write log.dat");
   close(fd);
 
-  CHECK(tdb_ensure_table(TEST_DIR, "log", TEST_SCHEMA) == 0, "second failed");
+  CHECK(db_ensure_table(TEST_DIR, "log", TEST_SCHEMA) == 0, "second failed");
 
   char catalog[1024];
   CHECK(slurp(TEST_DIR "/catalog.txt", catalog, sizeof(catalog)) == 0,
@@ -158,13 +158,13 @@ static int test_create_is_idempotent(void) {
 /* A daemon that forgets to name its data directory must be told, not given a
  * shared default that would collide with another daemon's tables. */
 static int test_dir_is_required(void) {
-  tdb_opts_t opts;
+  db_opts_t opts;
 
-  tdb_opts_default(&opts);
-  CHECK(opts.dir[0] == '\0', "tdb_opts_default invented a directory");
-  CHECK(tdb_ensure_table("", "log", TEST_SCHEMA) < 0,
+  memset(&opts, 0, sizeof opts);
+  CHECK(opts.dir[0] == '\0', "zeroed options invented a directory");
+  CHECK(db_ensure_table("", "log", TEST_SCHEMA) < 0,
         "empty directory was accepted");
-  CHECK(tdb_start(&opts, NULL, NULL, 0) == NULL,
+  CHECK(db_start(&opts, NULL, NULL, 0) == NULL,
         "started with no directory set");
   return 0;
 }
@@ -173,21 +173,21 @@ static int test_dir_is_required(void) {
 
 static int test_quote_plain(void) {
   char out[64];
-  tdb_quote(out, sizeof(out), "hello");
+  db_quote(out, sizeof(out), "hello");
   CHECK(strcmp(out, "'hello'") == 0, "plain text not wrapped");
   return 0;
 }
 
 static int test_quote_doubles_quotes(void) {
   char out[64];
-  tdb_quote(out, sizeof(out), "it's");
+  db_quote(out, sizeof(out), "it's");
   CHECK(strcmp(out, "'it''s'") == 0, "quote not doubled");
   return 0;
 }
 
 static int test_quote_injection_stays_one_literal(void) {
   char out[128];
-  tdb_quote(out, sizeof(out), "x'); insert into log values (9);--");
+  db_quote(out, sizeof(out), "x'); insert into log values (9);--");
 
   /* Every quote in the payload must be doubled, so the parser sees one
    * literal and never a second statement. Counting is enough: an odd number
@@ -213,7 +213,7 @@ static int test_quote_injection_stays_one_literal(void) {
 
 static int test_quote_truncates_safely(void) {
   char out[8];
-  tdb_quote(out, sizeof(out), "''''''''''''''''");
+  db_quote(out, sizeof(out), "''''''''''''''''");
   CHECK(strlen(out) < sizeof(out), "overflowed the buffer");
   CHECK(out[0] == '\'' && out[strlen(out) - 1] == '\'',
         "truncation left an unterminated literal");
@@ -223,7 +223,7 @@ static int test_quote_truncates_safely(void) {
 /* === B. The select-reply parser === */
 
 /*
- * Bodies exactly as tdb_socket_exec() hands them over: the lines above the
+ * Bodies exactly as db_socket_exec() hands them over: the lines above the
  * marker, joined by '\n', with no trailing newline.
  *
  * Copied from a live runner rather than from Query.java, narration included -
@@ -260,10 +260,10 @@ static int test_rows_counts_and_splits(void) {
   const char *f[3];
   size_t len[3];
 
-  CHECK(tdb_row_count(REPLY_TWO_ROWS) == 2, "wrong row count");
-  CHECK(tdb_row_fields(REPLY_TWO_ROWS, 0, f, len, 3) == 3, "wrong field count");
+  CHECK(db_row_count(REPLY_TWO_ROWS) == 2, "wrong row count");
+  CHECK(db_row_fields(REPLY_TWO_ROWS, 0, f, len, 3) == 3, "wrong field count");
   CHECK(len[1] == 5 && memcmp(f[1], "alice", 5) == 0, "row 0 field 1 wrong");
-  CHECK(tdb_row_fields(REPLY_TWO_ROWS, 1, f, len, 3) == 3, "wrong field count");
+  CHECK(db_row_fields(REPLY_TWO_ROWS, 1, f, len, 3) == 3, "wrong field count");
   CHECK(len[0] == 1 && f[0][0] == '2', "row 1 field 0 wrong");
   CHECK(len[2] == 4 && memcmp(f[2], "cafe", 4) == 0, "row 1 field 2 wrong");
   return 0;
@@ -276,17 +276,17 @@ static int test_rows_counts_and_splits(void) {
  * rows that happened to fit would refuse a login for an account that exists.
  */
 static int test_rows_zero_is_not_an_error(void) {
-  CHECK(tdb_row_count(REPLY_NO_ROWS) == 0, "empty result miscounted");
-  CHECK(tdb_row_count("Invalid SQL expression: nonsense") == -1,
+  CHECK(db_row_count(REPLY_NO_ROWS) == 0, "empty result miscounted");
+  CHECK(db_row_count("Invalid SQL expression: nonsense") == -1,
         "an error message parsed as a table");
-  CHECK(tdb_row_count("Inserted 1 rows.\n 1 rows.") == -1,
+  CHECK(db_row_count("Inserted 1 rows.\n 1 rows.") == -1,
         "output with no rule line parsed as a table");
-  CHECK(tdb_row_count("id\tname\t\n-------\n1\talice\n2\tbob") == -1,
+  CHECK(db_row_count("id\tname\t\n-------\n1\talice\n2\tbob") == -1,
         "a body cut off mid-table reported a count");
-  CHECK(tdb_row_count("id\tname\t\n-------\n1\talice\n\n 7 rows.") == -1,
+  CHECK(db_row_count("id\tname\t\n-------\n1\talice\n\n 7 rows.") == -1,
         "a count that disagrees with the rows was believed");
-  CHECK(tdb_row_count("") == -1, "empty body parsed as a table");
-  CHECK(tdb_row_count(NULL) == -1, "NULL body parsed as a table");
+  CHECK(db_row_count("") == -1, "empty body parsed as a table");
+  CHECK(db_row_count(NULL) == -1, "NULL body parsed as a table");
   return 0;
 }
 
@@ -302,11 +302,11 @@ static int test_rows_ignores_the_trailer(void) {
   const char *f[2];
   size_t len[2];
 
-  CHECK(tdb_row_count(reply) == 1, "trailer or blank line counted as a row");
-  CHECK(tdb_row_fields(reply, 0, f, len, 2) == 2, "wrong field count");
+  CHECK(db_row_count(reply) == 1, "trailer or blank line counted as a row");
+  CHECK(db_row_fields(reply, 0, f, len, 2) == 2, "wrong field count");
   CHECK(len[1] == 7 && memcmp(f[1], "9 rows.", 7) == 0, "field text wrong");
-  CHECK(tdb_row_fields(reply, 1, f, len, 2) == -1, "read past the last row");
-  CHECK(tdb_row_fields(reply, -1, f, len, 2) == -1, "accepted a negative row");
+  CHECK(db_row_fields(reply, 1, f, len, 2) == -1, "read past the last row");
+  CHECK(db_row_fields(reply, -1, f, len, 2) == -1, "accepted a negative row");
   return 0;
 }
 
@@ -325,7 +325,7 @@ static int test_rows_reports_extra_fields(void) {
   const char *f[2];
   size_t len[2];
 
-  CHECK(tdb_row_fields(reply, 0, f, len, 2) == 3, "extra field not reported");
+  CHECK(db_row_fields(reply, 0, f, len, 2) == 3, "extra field not reported");
   /* An empty value is a value: dropping it would shift every field after it,
    * which is exactly how a salt gets read as a digest. */
   CHECK(len[1] == 0, "empty field was skipped");
@@ -418,8 +418,8 @@ static void stop_peer(pid_t pid, int lfd) {
   (void)unlink(TEST_SOCK);
 }
 
-static void test_socket_opts(tdb_socket_opts_t *opts) {
-  tdb_socket_opts_default(opts);
+static void test_socket_opts(db_socket_opts_t *opts) {
+  db_socket_opts_load(opts);
   snprintf(opts->sock, sizeof(opts->sock), "%s", TEST_SOCK);
   opts->timeout_ms = TEST_TIMEOUT_MS;
 }
@@ -427,15 +427,15 @@ static void test_socket_opts(tdb_socket_opts_t *opts) {
 /* A missing socket is the runner being down, which must fail immediately
  * rather than after the deadline: there is nothing to wait for. */
 static int test_socket_open_without_a_runner(void) {
-  tdb_socket_opts_t opts;
+  db_socket_opts_t opts;
 
   test_socket_opts(&opts);
   (void)unlink(TEST_SOCK);
-  CHECK(tdb_socket_open(&opts) == NULL, "opened a connection to nothing");
+  CHECK(db_socket_open(&opts) == NULL, "opened a connection to nothing");
 
-  tdb_socket_opts_default(&opts);
+  db_socket_opts_load(&opts);
   opts.sock[0] = '\0';
-  CHECK(tdb_socket_open(&opts) == NULL, "opened with no socket path set");
+  CHECK(db_socket_open(&opts) == NULL, "opened with no socket path set");
   return 0;
 }
 
@@ -446,16 +446,16 @@ static int test_socket_open_without_a_runner(void) {
  * hang inside a session process.
  */
 static int test_socket_open_gives_up_without_a_greeting(void) {
-  tdb_socket_opts_t opts;
+  db_socket_opts_t opts;
 
   test_socket_opts(&opts);
   int lfd = listen_unix(TEST_SOCK);
   CHECK(lfd >= 0, "cannot listen on the test socket");
 
   alarm(WATCHDOG_SECS);
-  tdb_socket_t *c = tdb_socket_open(&opts);
+  db_socket_t *c = db_socket_open(&opts);
   alarm(0);
-  tdb_socket_close(c);
+  db_socket_close(c);
   stop_peer(0, lfd);
 
   CHECK(c == NULL, "a connection with no greeting was accepted");
@@ -465,7 +465,7 @@ static int test_socket_open_gives_up_without_a_greeting(void) {
 /* The deadline spans the connection, not each statement, and an expired one
  * stays expired: a caller's retry loop cannot outrun it. */
 static int test_exec_deadline_is_sticky(void) {
-  tdb_socket_opts_t opts;
+  db_socket_opts_t opts;
 
   test_socket_opts(&opts);
   int lfd = listen_unix(TEST_SOCK);
@@ -473,20 +473,20 @@ static int test_exec_deadline_is_sticky(void) {
   pid_t peer = fork_peer(lfd, PEER_GREETS_ONLY);
 
   alarm(WATCHDOG_SECS);
-  tdb_socket_t *c = tdb_socket_open(&opts);
+  db_socket_t *c = db_socket_open(&opts);
   CHECK(c != NULL, "greeting was not accepted");
 
   char body[64] = "stale";
-  tdb_status_t first = tdb_socket_exec(c, "select 1 from log;", body, sizeof(body));
-  tdb_status_t second = tdb_socket_exec(c, "select 1 from log;", NULL, 0);
+  db_status_t first = db_socket_exec(c, "select 1 from log;", body, sizeof(body));
+  db_status_t second = db_socket_exec(c, "select 1 from log;", NULL, 0);
   alarm(0);
 
-  tdb_socket_close(c);
+  db_socket_close(c);
   stop_peer(peer, lfd);
 
-  CHECK(first == TDB_TIMEOUT, "a silent runner did not time out");
+  CHECK(first == DB_TIMEOUT, "a silent runner did not time out");
   CHECK(body[0] == '\0', "body was not cleared on a failed exchange");
-  CHECK(second == TDB_TIMEOUT, "the expired deadline was not sticky");
+  CHECK(second == DB_TIMEOUT, "the expired deadline was not sticky");
   return 0;
 }
 
@@ -497,7 +497,7 @@ static int test_exec_deadline_is_sticky(void) {
  * describes - a client that silently drops writes.
  */
 static int test_retry_is_not_an_error(void) {
-  tdb_socket_opts_t opts;
+  db_socket_opts_t opts;
 
   test_socket_opts(&opts);
   int lfd = listen_unix(TEST_SOCK);
@@ -505,22 +505,22 @@ static int test_retry_is_not_an_error(void) {
   pid_t peer = fork_peer(lfd, PEER_RETRY);
 
   alarm(WATCHDOG_SECS);
-  tdb_socket_t *c = tdb_socket_open(&opts);
+  db_socket_t *c = db_socket_open(&opts);
   CHECK(c != NULL, "greeting was not accepted");
-  tdb_status_t st = tdb_socket_exec(c, "insert into log values (1);", NULL, 0);
+  db_status_t st = db_socket_exec(c, "insert into log values (1);", NULL, 0);
   alarm(0);
 
-  tdb_socket_close(c);
+  db_socket_close(c);
   stop_peer(peer, lfd);
 
-  CHECK(st == TDB_RETRY, "<<END retry>> was not reported as TDB_RETRY");
+  CHECK(st == DB_RETRY, "<<END retry>> was not reported as DB_RETRY");
   return 0;
 }
 
 /* A rejected statement is the runner's answer, not a broken connection: the
  * body comes back and the caller may keep using the connection. */
 static int test_error_marker_carries_its_body(void) {
-  tdb_socket_opts_t opts;
+  db_socket_opts_t opts;
 
   test_socket_opts(&opts);
   int lfd = listen_unix(TEST_SOCK);
@@ -529,23 +529,23 @@ static int test_error_marker_carries_its_body(void) {
 
   char body[64];
   alarm(WATCHDOG_SECS);
-  tdb_socket_t *c = tdb_socket_open(&opts);
+  db_socket_t *c = db_socket_open(&opts);
   CHECK(c != NULL, "greeting was not accepted");
-  tdb_status_t st = tdb_socket_exec(c, "select 1 from nope;", body, sizeof(body));
+  db_status_t st = db_socket_exec(c, "select 1 from nope;", body, sizeof(body));
   alarm(0);
 
-  tdb_socket_close(c);
+  db_socket_close(c);
   stop_peer(peer, lfd);
 
-  CHECK(st == TDB_ERROR, "a rejected statement was not TDB_ERROR");
+  CHECK(st == DB_ERROR, "a rejected statement was not DB_ERROR");
   CHECK(strcmp(body, "no such table") == 0, "error body was not returned");
   return 0;
 }
 
-/* A runner that dies mid-exchange is TDB_IO, and the caller finds out rather
+/* A runner that dies mid-exchange is DB_IO, and the caller finds out rather
  * than waiting out the deadline for it. */
 static int test_hangup_is_reported(void) {
-  tdb_socket_opts_t opts;
+  db_socket_opts_t opts;
 
   test_socket_opts(&opts);
   int lfd = listen_unix(TEST_SOCK);
@@ -553,17 +553,17 @@ static int test_hangup_is_reported(void) {
   pid_t peer = fork_peer(lfd, PEER_HANGS_UP);
 
   alarm(WATCHDOG_SECS);
-  tdb_socket_t *c = tdb_socket_open(&opts);
+  db_socket_t *c = db_socket_open(&opts);
   CHECK(c != NULL, "greeting was not accepted");
-  tdb_status_t st = tdb_socket_exec(c, "select 1 from log;", NULL, 0);
-  tdb_status_t again = tdb_socket_exec(c, "select 1 from log;", NULL, 0);
+  db_status_t st = db_socket_exec(c, "select 1 from log;", NULL, 0);
+  db_status_t again = db_socket_exec(c, "select 1 from log;", NULL, 0);
   alarm(0);
 
-  tdb_socket_close(c);
+  db_socket_close(c);
   stop_peer(peer, lfd);
 
-  CHECK(st == TDB_IO, "a dead runner was not reported as TDB_IO");
-  CHECK(again == TDB_IO, "a dead connection was used again");
+  CHECK(st == DB_IO, "a dead runner was not reported as DB_IO");
+  CHECK(again == DB_IO, "a dead connection was used again");
   return 0;
 }
 
@@ -573,7 +573,7 @@ static int test_hangup_is_reported(void) {
  * reply on the connection off by one. Refused before it reaches the wire.
  */
 static int test_newline_statement_is_refused(void) {
-  tdb_socket_opts_t opts;
+  db_socket_opts_t opts;
 
   test_socket_opts(&opts);
   int lfd = listen_unix(TEST_SOCK);
@@ -581,16 +581,16 @@ static int test_newline_statement_is_refused(void) {
   pid_t peer = fork_peer(lfd, PEER_GREETS_ONLY);
 
   alarm(WATCHDOG_SECS);
-  tdb_socket_t *c = tdb_socket_open(&opts);
+  db_socket_t *c = db_socket_open(&opts);
   CHECK(c != NULL, "greeting was not accepted");
-  /* If this were sent, the peer's silence would make it TDB_TIMEOUT. */
-  tdb_status_t st = tdb_socket_exec(c, "select 1 from log;\ndrop;", NULL, 0);
+  /* If this were sent, the peer's silence would make it DB_TIMEOUT. */
+  db_status_t st = db_socket_exec(c, "select 1 from log;\ndrop;", NULL, 0);
   alarm(0);
 
-  tdb_socket_close(c);
+  db_socket_close(c);
   stop_peer(peer, lfd);
 
-  CHECK(st == TDB_ERROR, "a two-statement line was sent to the runner");
+  CHECK(st == DB_ERROR, "a two-statement line was sent to the runner");
   return 0;
 }
 
@@ -626,44 +626,45 @@ static int have_java(void) {
   return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
-static void test_opts(tdb_opts_t *opts) {
-  tdb_opts_default(opts);
+static void test_opts(db_opts_t *opts) {
+  memset(opts, 0, sizeof *opts);
   snprintf(opts->dir, sizeof(opts->dir), "%s", TEST_DIR);
   snprintf(opts->jar, sizeof(opts->jar), "%s", TEST_JAR);
+  snprintf(opts->java, sizeof(opts->java), "%s", DB_DEFAULT_JAVA);
 }
 
 /* Write two rows, shut down, then reopen and read them back - which also
  * proves the clean shutdown flushed them to disk. */
 static int test_round_trip(void) {
-  tdb_opts_t opts;
+  db_opts_t opts;
   unsigned long dropped = 1, errors = 1;
 
   reset_dir();
   test_opts(&opts);
-  CHECK(tdb_ensure_table(TEST_DIR, "log", TEST_SCHEMA) == 0, "create failed");
+  CHECK(db_ensure_table(TEST_DIR, "log", TEST_SCHEMA) == 0, "create failed");
 
-  tdb_t *db = tdb_start(&opts, NULL, NULL, 0);
+  db_t *db = db_start(&opts, NULL, NULL, 0);
   CHECK(db != NULL, "cannot start PipeRunner");
 
   char quoted[64];
   char sql[256];
-  tdb_quote(quoted, sizeof(quoted), "it's fine");
+  db_quote(quoted, sizeof(quoted), "it's fine");
   snprintf(sql, sizeof(sql),
            "insert into log values (1, 42, 7, 'INFO', %s);", quoted);
-  CHECK(tdb_submit(db, sql) == 0, "submit rejected");
-  CHECK(tdb_submit(db, "insert into log values (2, 42, 8, 'WARN', 'second');") ==
+  CHECK(db_submit(db, sql) == 0, "submit rejected");
+  CHECK(db_submit(db, "insert into log values (2, 42, 8, 'WARN', 'second');") ==
             0,
         "submit rejected");
 
-  tdb_stop(db, &dropped, &errors);
+  db_stop(db, &dropped, &errors);
   CHECK(dropped == 0, "statements were dropped");
   CHECK(errors == 0, "SimpleDB rejected a statement");
 
   /* Reopen and let the startup probe read the table back. */
   char body[2048];
-  db = tdb_start(&opts, "select max(id) from log;", body, sizeof(body));
+  db = db_start(&opts, "select max(id) from log;", body, sizeof(body));
   CHECK(db != NULL, "cannot restart PipeRunner");
-  tdb_stop(db, NULL, NULL);
+  db_stop(db, NULL, NULL);
 
   CHECK(strstr(body, "max (log.id)") != NULL, "probe returned no result");
   /* The rule line, then the value: 2, because two rows were written. */
@@ -677,23 +678,23 @@ static int test_round_trip(void) {
 /* A statement the parser rejects must be counted, not silently swallowed,
  * and must not take the connection down with it. */
 static int test_bad_sql_is_counted(void) {
-  tdb_opts_t opts;
+  db_opts_t opts;
   unsigned long dropped = 0, errors = 0;
 
   reset_dir();
   test_opts(&opts);
-  CHECK(tdb_ensure_table(TEST_DIR, "log", TEST_SCHEMA) == 0, "create failed");
+  CHECK(db_ensure_table(TEST_DIR, "log", TEST_SCHEMA) == 0, "create failed");
 
-  tdb_t *db = tdb_start(&opts, NULL, NULL, 0);
+  db_t *db = db_start(&opts, NULL, NULL, 0);
   CHECK(db != NULL, "cannot start PipeRunner");
 
-  CHECK(tdb_submit(db, "insert into nosuchtable values (1);") == 0,
+  CHECK(db_submit(db, "insert into nosuchtable values (1);") == 0,
         "submit rejected");
-  CHECK(tdb_submit(db, "insert into log values (1, 1, 1, 'INFO', 'after');") ==
+  CHECK(db_submit(db, "insert into log values (1, 1, 1, 'INFO', 'after');") ==
             0,
         "submit rejected");
 
-  tdb_stop(db, &dropped, &errors);
+  db_stop(db, &dropped, &errors);
   CHECK(errors == 1, "bad statement was not counted as an error");
   CHECK(dropped == 0, "good statement after a bad one was dropped");
   return 0;
@@ -713,10 +714,12 @@ static int test_bad_sql_is_counted(void) {
  * back wrong in a way that looks like a parser bug. There is nothing
  * legitimate for a table created seconds ago to recover.
  */
-static void test_runner_opts(tdb_runner_opts_t *opts) {
-  tdb_runner_opts_default(opts);
+static void test_runner_opts(db_runner_opts_t *opts) {
+  memset(opts, 0, sizeof *opts);
   snprintf(opts->dir, sizeof(opts->dir), "%s", TEST_DIR);
   snprintf(opts->jar, sizeof(opts->jar), "%s", TEST_JAR);
+  snprintf(opts->java, sizeof(opts->java), "%s", DB_DEFAULT_JAVA);
+  snprintf(opts->err_path, sizeof(opts->err_path), "%s", DB_DEFAULT_ERR_PATH);
   snprintf(opts->ipc, sizeof(opts->ipc), "%s", TEST_SOCK);
   opts->sessions = 4;
   opts->recover = 0;
@@ -732,16 +735,16 @@ static void stop_runner(pid_t pid) {
 /* Run fn against a freshly created table and a live runner, and take the
  * runner down afterwards whichever way fn went. */
 static int with_runner(int (*fn)(void)) {
-  tdb_runner_opts_t opts;
+  db_runner_opts_t opts;
 
   reset_dir();
-  CHECK(tdb_ensure_table(TEST_DIR, "log", TEST_SCHEMA) == 0, "create failed");
+  CHECK(db_ensure_table(TEST_DIR, "log", TEST_SCHEMA) == 0, "create failed");
 
   test_runner_opts(&opts);
-  pid_t pid = tdb_runner_spawn(&opts, -1);
+  pid_t pid = db_runner_spawn(&opts, -1);
   CHECK(pid > 0, "cannot spawn a runner");
 
-  int rc = tdb_runner_wait(TEST_SOCK, pid, 20000);
+  int rc = db_runner_wait(TEST_SOCK, pid, 20000);
   if (rc == 0)
     rc = fn();
   else
@@ -757,25 +760,25 @@ static int with_runner(int (*fn)(void)) {
  * a child behind for the caller to reap.
  */
 static int test_runner_refuses_before_forking(void) {
-  tdb_runner_opts_t opts;
+  db_runner_opts_t opts;
 
   test_runner_opts(&opts);
   opts.dir[0] = '\0';
-  CHECK(tdb_runner_spawn(&opts, -1) < 0, "spawned with no data directory");
+  CHECK(db_runner_spawn(&opts, -1) < 0, "spawned with no data directory");
 
   test_runner_opts(&opts);
   snprintf(opts.jar, sizeof(opts.jar), "%s", "db/dist/does-not-exist.jar");
-  CHECK(tdb_runner_spawn(&opts, -1) < 0, "spawned with a missing jar");
+  CHECK(db_runner_spawn(&opts, -1) < 0, "spawned with a missing jar");
 
   test_runner_opts(&opts);
   snprintf(opts.java, sizeof(opts.java), "%s", "definitely-not-a-java-binary");
-  CHECK(tdb_runner_spawn(&opts, -1) < 0, "spawned with an unrunnable java");
+  CHECK(db_runner_spawn(&opts, -1) < 0, "spawned with an unrunnable java");
 
   /* The catalog is read once at startup, so a runner started before the
    * tables exist serves a database with no tables in it until it restarts. */
   reset_dir();
   test_runner_opts(&opts);
-  CHECK(tdb_runner_spawn(&opts, -1) < 0, "spawned with no catalog");
+  CHECK(db_runner_spawn(&opts, -1) < 0, "spawned with no catalog");
   return 0;
 }
 
@@ -785,7 +788,7 @@ static int test_runner_wait_gives_up(void) {
   (void)unlink(TEST_SOCK);
 
   alarm(WATCHDOG_SECS);
-  CHECK(tdb_runner_wait(TEST_SOCK, -1, 200) < 0, "waited on nothing and won");
+  CHECK(db_runner_wait(TEST_SOCK, -1, 200) < 0, "waited on nothing and won");
 
   /* A child that exits immediately: the wait must notice the death, not the
    * deadline, so the exit status can be reported. */
@@ -793,7 +796,7 @@ static int test_runner_wait_gives_up(void) {
   CHECK(pid >= 0, "cannot fork");
   if (pid == 0)
     _exit(3);
-  CHECK(tdb_runner_wait(TEST_SOCK, pid, 20000) < 0, "a dead child looked up");
+  CHECK(db_runner_wait(TEST_SOCK, pid, 20000) < 0, "a dead child looked up");
   alarm(0);
   return 0;
 }
@@ -802,7 +805,7 @@ static int test_runner_wait_gives_up(void) {
  * connection usable - the runner's answer to a bad statement is an answer,
  * not a broken session. */
 static int conn_queries(void) {
-  tdb_socket_opts_t opts;
+  db_socket_opts_t opts;
   char body[1024];
   const char *f[2];
   size_t len[2];
@@ -810,39 +813,39 @@ static int conn_queries(void) {
   test_socket_opts(&opts);
   opts.timeout_ms = 5000; /* a cold JVM's first statement is not fast */
 
-  tdb_socket_t *c = tdb_socket_open(&opts);
+  db_socket_t *c = db_socket_open(&opts);
   CHECK(c != NULL, "cannot connect to the runner");
 
-  CHECK(tdb_socket_exec(c, "insert into log values (1, 7, 7, 'INFO', 'one');",
-                      NULL, 0) == TDB_OK,
+  CHECK(db_socket_exec(c, "insert into log values (1, 7, 7, 'INFO', 'one');",
+                      NULL, 0) == DB_OK,
         "insert failed");
-  CHECK(tdb_socket_exec(c, "insert into log values (2, 7, 8, 'WARN', 'two');",
-                      NULL, 0) == TDB_OK,
+  CHECK(db_socket_exec(c, "insert into log values (2, 7, 8, 'WARN', 'two');",
+                      NULL, 0) == DB_OK,
         "insert failed");
 
-  CHECK(tdb_socket_exec(c, "select id, msg from log;", body, sizeof(body)) ==
-            TDB_OK,
+  CHECK(db_socket_exec(c, "select id, msg from log;", body, sizeof(body)) ==
+            DB_OK,
         "select failed");
-  CHECK(tdb_row_count(body) == 2, "select did not return two rows");
-  CHECK(tdb_row_fields(body, 1, f, len, 2) == 2, "row 1 has the wrong shape");
+  CHECK(db_row_count(body) == 2, "select did not return two rows");
+  CHECK(db_row_fields(body, 1, f, len, 2) == 2, "row 1 has the wrong shape");
   CHECK(len[1] == 3 && memcmp(f[1], "two", 3) == 0, "row 1 carries wrong text");
 
   /* A select that matches nothing is the login path's "no such user": it must
    * read as zero rows, which is a 404, and never as no table at all, which is
    * a 500. The distinction is invisible in a body until something reads it. */
-  CHECK(tdb_socket_exec(c, "select id from log where msg = 'nobody';", body,
-                      sizeof(body)) == TDB_OK,
+  CHECK(db_socket_exec(c, "select id from log where msg = 'nobody';", body,
+                      sizeof(body)) == DB_OK,
         "select matching nothing failed");
-  CHECK(tdb_row_count(body) == 0, "an empty result did not read as zero rows");
+  CHECK(db_row_count(body) == 0, "an empty result did not read as zero rows");
 
-  CHECK(tdb_socket_exec(c, "select * from nosuchtable;", body, sizeof(body)) ==
-            TDB_ERROR,
-        "a bad statement was not TDB_ERROR");
-  CHECK(tdb_socket_exec(c, "select id from log;", body, sizeof(body)) == TDB_OK,
+  CHECK(db_socket_exec(c, "select * from nosuchtable;", body, sizeof(body)) ==
+            DB_ERROR,
+        "a bad statement was not DB_ERROR");
+  CHECK(db_socket_exec(c, "select id from log;", body, sizeof(body)) == DB_OK,
         "the connection did not survive a rejected statement");
-  CHECK(tdb_row_count(body) == 2, "row count changed after a bad statement");
+  CHECK(db_row_count(body) == 2, "row count changed after a bad statement");
 
-  tdb_socket_close(c);
+  db_socket_close(c);
   return 0;
 }
 
@@ -852,39 +855,39 @@ static int conn_queries(void) {
  * registration: commit is the account, rollback is the 409.
  */
 static int conn_transactions(void) {
-  tdb_socket_opts_t opts;
+  db_socket_opts_t opts;
   char body[1024];
 
   test_socket_opts(&opts);
   opts.timeout_ms = 5000;
 
-  tdb_socket_t *c = tdb_socket_open(&opts);
+  db_socket_t *c = db_socket_open(&opts);
   CHECK(c != NULL, "cannot connect to the runner");
 
-  CHECK(tdb_socket_exec(c, "set transaction read write;", NULL, 0) == TDB_OK,
+  CHECK(db_socket_exec(c, "set transaction read write;", NULL, 0) == DB_OK,
         "cannot open a transaction");
-  CHECK(tdb_socket_exec(c, "insert into log values (1, 1, 1, 'INFO', 'kept');",
-                      NULL, 0) == TDB_OK,
+  CHECK(db_socket_exec(c, "insert into log values (1, 1, 1, 'INFO', 'kept');",
+                      NULL, 0) == DB_OK,
         "insert in transaction failed");
-  CHECK(tdb_socket_exec(c, "commit;", NULL, 0) == TDB_OK, "commit failed");
+  CHECK(db_socket_exec(c, "commit;", NULL, 0) == DB_OK, "commit failed");
 
-  CHECK(tdb_socket_exec(c, "set transaction read write;", NULL, 0) == TDB_OK,
+  CHECK(db_socket_exec(c, "set transaction read write;", NULL, 0) == DB_OK,
         "cannot open a second transaction");
-  CHECK(tdb_socket_exec(c, "insert into log values (2, 2, 2, 'INFO', 'gone');",
-                      NULL, 0) == TDB_OK,
+  CHECK(db_socket_exec(c, "insert into log values (2, 2, 2, 'INFO', 'gone');",
+                      NULL, 0) == DB_OK,
         "insert in transaction failed");
-  CHECK(tdb_socket_exec(c, "rollback;", NULL, 0) == TDB_OK, "rollback failed");
-  tdb_socket_close(c);
+  CHECK(db_socket_exec(c, "rollback;", NULL, 0) == DB_OK, "rollback failed");
+  db_socket_close(c);
 
   /* A second connection, because the point is what the runner kept, not what
    * this session remembers. */
-  c = tdb_socket_open(&opts);
+  c = db_socket_open(&opts);
   CHECK(c != NULL, "cannot reconnect to the runner");
-  CHECK(tdb_socket_exec(c, "select id from log;", body, sizeof(body)) == TDB_OK,
+  CHECK(db_socket_exec(c, "select id from log;", body, sizeof(body)) == DB_OK,
         "select failed");
-  tdb_socket_close(c);
+  db_socket_close(c);
 
-  CHECK(tdb_row_count(body) == 1,
+  CHECK(db_row_count(body) == 1,
         "the committed row is missing or the rolled-back one survived");
   return 0;
 }
@@ -919,13 +922,13 @@ int main(void) {
       test_socket_open_without_a_runner);
   run("gives up on a connection that is never greeted",
       test_socket_open_gives_up_without_a_greeting);
-  run("keeps returning TDB_TIMEOUT once the deadline has passed",
+  run("keeps returning DB_TIMEOUT once the deadline has passed",
       test_exec_deadline_is_sticky);
-  run("reports a deadlock abort as TDB_RETRY, not an error",
+  run("reports a deadlock abort as DB_RETRY, not an error",
       test_retry_is_not_an_error);
   run("returns the body of a rejected statement",
       test_error_marker_carries_its_body);
-  run("reports a runner that hangs up as TDB_IO", test_hangup_is_reported);
+  run("reports a runner that hangs up as DB_IO", test_hangup_is_reported);
   run("refuses a statement carrying a newline",
       test_newline_statement_is_refused);
 

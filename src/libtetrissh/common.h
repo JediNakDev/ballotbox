@@ -6,7 +6,8 @@
  * Every client and server source file includes this header. It provides:
  *   - Integer <-> big-endian byte conversion
  *   - Reliable socket read
- *   - OpenSSL convenience wrappers for signing, verifying, encrypting, decrypting
+ *   - OpenSSL convenience wrappers for signing, verifying, encrypting,
+ * decrypting
  *   - Fernet-equivalent symmetric encrypt/decrypt (AES-128-CBC + HMAC-SHA256)
  *   - X.509 certificate loading and verification helpers
  */
@@ -161,16 +162,14 @@ int verify_server_cert(X509 *server_cert, const char *ca_cert_path);
  * Returns a newly malloc'd signature buffer, and writes its length to *sig_len.
  * Returns NULL on failure. Caller must free().
  */
-unsigned char *sign_message_pss(EVP_PKEY *priv_key,
-                                const unsigned char *msg, size_t msg_len,
-                                size_t *sig_len);
+unsigned char *sign_message_pss(EVP_PKEY *priv_key, const unsigned char *msg,
+                                size_t msg_len, size_t *sig_len);
 
 /**
  * Verifies an RSA-PSS signature on 'msg' using the public key from 'cert'.
  * Returns 1 if valid, 0 if invalid or error.
  */
-int verify_message_pss(X509 *cert,
-                       const unsigned char *sig, size_t sig_len,
+int verify_message_pss(X509 *cert, const unsigned char *sig, size_t sig_len,
                        const unsigned char *msg, size_t msg_len);
 
 /* ======================================================================
@@ -184,9 +183,9 @@ int verify_message_pss(X509 *cert,
  * Returns a newly malloc'd ciphertext buffer (RSA_KEY_BYTES long),
  * and writes its length to *out_len. Returns NULL on failure.
  */
-unsigned char *rsa_encrypt_block(EVP_PKEY *pub_key,
-                                 const unsigned char *plain, size_t plain_len,
-                                 size_t *out_len, int use_oaep);
+unsigned char *rsa_encrypt_block(EVP_PKEY *pub_key, const unsigned char *plain,
+                                 size_t plain_len, size_t *out_len,
+                                 int use_oaep);
 
 /**
  * Decrypts a single RSA-encrypted block.

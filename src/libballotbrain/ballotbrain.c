@@ -43,7 +43,7 @@ void bb_write_unlock(bb_ctx *ctx) {
  * Durable id allocation: "select max(seq) from election" on its own
  * connection, own transaction-free (auto-commit) statement. Deliberately
  * NOT in db.c/txn.c: it never calls db_exec or bb_db_begin/commit/rollback,
- * only tdb_socket_* directly, so it needs no fake and stays safe to call
+ * only db_socket_* directly, so it needs no fake and stays safe to call
  * from every test - and when the store is unreachable (no fake, no real
  * bin/tetrisdb, exactly the situation a plain unit test is in) it degrades
  * to a fixed first id rather than failing, which is what keeps
@@ -56,19 +56,19 @@ void bb_alloc_id(bb_ctx *ctx, char out[BB_ID_LEN]) {
     return;
   }
 
-  tdb_socket_opts_t opts = bb_effective_db_opts(ctx);
-  tdb_socket_t *conn = tdb_socket_open(&opts);
+  db_socket_opts_t opts = bb_effective_db_opts(ctx);
+  db_socket_t *conn = db_socket_open(&opts);
   int next = 100; /* first id if the table is empty or the store is unreachable */
 
   if (conn != NULL) {
     char body[4096];
-    if (tdb_socket_exec(conn, "select max(seq) from " BB_DB_TABLE_ELECTION ";", body,
-                        sizeof body) == TDB_OK) {
-      int rows = tdb_row_count(body);
+    if (db_socket_exec(conn, "select max(seq) from " BB_DB_TABLE_ELECTION ";", body,
+                        sizeof body) == DB_OK) {
+      int rows = db_row_count(body);
       if (rows > 0) {
         const char *f[1];
         size_t len[1];
-        if (tdb_row_fields(body, 0, f, len, 1) >= 1) {
+        if (db_row_fields(body, 0, f, len, 1) >= 1) {
           char text[24];
           size_t n = len[0] < sizeof(text) - 1 ? len[0] : sizeof(text) - 1;
           memcpy(text, f[0], n);
@@ -81,7 +81,7 @@ void bb_alloc_id(bb_ctx *ctx, char out[BB_ID_LEN]) {
         }
       }
     }
-    tdb_socket_close(conn);
+    db_socket_close(conn);
   }
 
   snprintf(out, BB_ID_LEN, "E-%d", next);
@@ -93,13 +93,13 @@ void bb_destroy(bb_ctx *ctx) {
   }
   /* A transaction left open by a caller that forgot to commit/rollback must
    * not leak the connection - closing it is also a rollback, per the wire
-   * contract. tdb_socket_close() directly, not db.c's bb_db_rollback(): a
+   * contract. db_socket_close() directly, not db.c's bb_db_rollback(): a
    * test that fakes db_exec (fake_brain_seams.h) must not be forced to link
    * the real db.c just because bb_destroy is in its call path - same
    * isolation reasoning as libballotclient's bcl_destroy not calling
    * bcl_disconnect. */
   if (ctx->txn_conn != NULL) {
-    tdb_socket_close(ctx->txn_conn);
+    db_socket_close(ctx->txn_conn);
   }
   pthread_mutex_destroy(&ctx->write_lock);
   free(ctx);

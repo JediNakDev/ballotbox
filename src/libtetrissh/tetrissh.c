@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "libtetrissh/tetrissh.h"
 #include "common.h"
+#include "libtetrisutil/logmsg.h"
 
 _Static_assert(sizeof(((session_t *)0)->key) == SESSION_KEY_LEN,
                "session_t.key must match SESSION_KEY_LEN in common.h");
@@ -24,12 +25,18 @@ _Static_assert(sizeof(((session_t *)0)->key) == SESSION_KEY_LEN,
  * lib-private and never seen by the application layer. */
 #define FRAME_PREFIX_BYTES 4
 
+/* A traffic frame's plaintext is the caller's payload, nothing else.
+ *
+ * There is NO replay defence at this layer. The HMAC proves a frame was not
+ * altered, but a recorded frame is bit-for-bit valid and verifies, so nothing
+ * here stops one being replayed. Whatever supplies that guarantee must live
+ * above libtetrissh. */
+
 static int send_u32(int fd, uint32_t value)
 {
     unsigned char buf[FRAME_PREFIX_BYTES] = {
         (unsigned char)(value >> 24), (unsigned char)(value >> 16),
-        (unsigned char)(value >> 8), (unsigned char)value
-    };
+        (unsigned char)(value >> 8), (unsigned char)value};
     return send_all(fd, buf, FRAME_PREFIX_BYTES);
 }
 
@@ -51,6 +58,7 @@ static int read_u32(int fd, uint32_t *value)
  * the stack copy of the session key. s is only written on success. */
 int session_connect(session_t *s, int fd, const char *ca_path)
 {
+    log_send(LOG_DEBUG, "secure client handshake fd=%d ca=%s", fd, ca_path);
     int rc = SESSION_OK;
     unsigned char *signed_nonce_len_buf = NULL;
     unsigned char *signed_nonce = NULL;
@@ -65,7 +73,12 @@ int session_connect(session_t *s, int fd, const char *ca_path)
     memset(s, 0, sizeof(*s));
 
     if (RAND_bytes(nonce, sizeof(nonce)) != 1)
+    {
+        (void)log_send(LOG_INFO,
+                       "operation=session_connect phase=complete status=%d",
+                       SESSION_ERR_CRYPTO);
         return SESSION_ERR_CRYPTO;
+    }
     size_t nonce_len = sizeof(nonce);
 
     if (send_int(fd, nonce_len) < 0 || send_all(fd, nonce, nonce_len) < 0)
@@ -112,8 +125,18 @@ int session_connect(session_t *s, int fd, const char *ca_path)
         goto fail;
     }
 
+    /* Logged here rather than inside verify_server_cert: common.c is PA2's and
+     * may not be modified, so the record is emitted by its caller, which knows
+     * the same two facts - which CA was used, and whether it vouched. */
+    log_send(LOG_DEBUG, "verifying server certificate fd=%d ca=%s", fd,
+             ca_path);
     server_cert = load_cert_bytes(server_cert_buf, server_cert_len);
-    if (!server_cert || !verify_server_cert(server_cert, ca_path))
+    int cert_ok = server_cert && verify_server_cert(server_cert, ca_path);
+    (void)log_send(cert_ok ? LOG_INFO : LOG_WARN,
+                   "operation=verify_server_cert phase=complete fd=%d "
+                   "status=%d",
+                   fd, cert_ok);
+    if (!cert_ok)
     {
         TSSH_LOG("tetrissh: server cert not verified\n");
         rc = SESSION_ERR_AUTH;
@@ -121,7 +144,8 @@ int session_connect(session_t *s, int fd, const char *ca_path)
     }
     TSSH_LOG("tetrissh: verified server cert\n");
 
-    if (!verify_message_pss(server_cert, signed_nonce, signed_nonce_len, nonce, nonce_len))
+    if (!verify_message_pss(server_cert, signed_nonce, signed_nonce_len, nonce,
+                            nonce_len))
     {
         TSSH_LOG("tetrissh: signed nonce not verified\n");
         rc = SESSION_ERR_AUTH;
@@ -142,7 +166,8 @@ int session_connect(session_t *s, int fd, const char *ca_path)
         goto fail;
     }
     size_t sym_key_len;
-    sym_key = rsa_encrypt_block(server_pub, session_key, sizeof(session_key), &sym_key_len, 1);
+    sym_key = rsa_encrypt_block(server_pub, session_key, sizeof(session_key),
+                                &sym_key_len, 1);
     if (!sym_key)
     {
         rc = SESSION_ERR_CRYPTO;
@@ -168,6 +193,8 @@ fail:
     free(sym_key);
     X509_free(server_cert);
     EVP_PKEY_free(server_pub);
+    (void)log_send(LOG_INFO,
+                   "operation=session_connect phase=complete status=%d", rc);
     return rc;
 }
 
@@ -175,6 +202,7 @@ fail:
  * session_connect; the decrypted key buffer is cleansed before free. */
 int session_accept(session_t *s, int fd, EVP_PKEY *priv, const char *cert_path)
 {
+    log_send(LOG_DEBUG, "secure server handshake fd=%d cert=%s", fd, cert_path);
     int rc = SESSION_OK;
     unsigned char *nonce_len_buf = NULL;
     unsigned char *nonce = NULL;
@@ -215,7 +243,8 @@ int session_accept(session_t *s, int fd, EVP_PKEY *priv, const char *cert_path)
         goto fail;
     }
 
-    if (send_int(fd, signed_len) < 0 || send_all(fd, signed_nonce, signed_len) < 0)
+    if (send_int(fd, signed_len) < 0 ||
+        send_all(fd, signed_nonce, signed_len) < 0)
     {
         rc = SESSION_ERR_IO;
         goto fail;
@@ -260,6 +289,7 @@ int session_accept(session_t *s, int fd, EVP_PKEY *priv, const char *cert_path)
         goto fail;
     }
     TSSH_LOG("tetrissh: authentication phase done\n");
+    log_send(LOG_DEBUG, "secure session fd=%d nonce signed and cert sent", fd);
 
     symkey_len_buf = read_bytes(fd, INT_BYTES);
     if (!symkey_len_buf)
@@ -280,7 +310,8 @@ int session_accept(session_t *s, int fd, EVP_PKEY *priv, const char *cert_path)
         rc = SESSION_ERR_IO;
         goto fail;
     }
-    key_buf = rsa_decrypt_block(priv, symkey_buf, symkey_len, &session_key_len, 1);
+    key_buf =
+        rsa_decrypt_block(priv, symkey_buf, symkey_len, &session_key_len, 1);
     if (!key_buf || session_key_len != SESSION_KEY_LEN)
     {
         TSSH_LOG("tetrissh: session key handshake failed\n");
@@ -304,6 +335,8 @@ fail:
     free(symkey_len_buf);
     free(symkey_buf);
     free(key_buf);
+    (void)log_send(LOG_INFO,
+                   "operation=session_accept phase=complete status=%d", rc);
     return rc;
 }
 
@@ -311,16 +344,24 @@ fail:
 
 int session_send(session_t *s, const uint8_t *buf, uint32_t len)
 {
+    log_send(LOG_DEBUG, "sending encrypted frame fd=%d plaintext_len=%u", s->fd,
+             len);
     if (!s->established)
     {
         TSSH_LOG("tetrissh: send before handshake\n");
         return SESSION_ERR_PROTO;
     }
-    /* Ciphertext is never smaller than plaintext, so this can't fit. */
+    /* Ciphertext is never smaller than plaintext, so a plaintext at the limit
+     * cannot fit either. */
     if (len > SESSION_MAX_FRAME)
         return SESSION_ERR_TOOBIG;
+
+    /* The caller's buffer goes straight to the cipher: with no counter to
+     * prepend there is nothing to assemble, so no intermediate copy is made
+     * and none has to be scrubbed. */
     size_t enc_block;
-    unsigned char *message = session_encrypt(s->key, buf, len, &enc_block);
+    unsigned char *message =
+        session_encrypt(s->key, buf, (size_t)len, &enc_block);
     if (!message)
         return SESSION_ERR_CRYPTO;
     /* Limit is defined on the wire frame — same quantity recv checks (A2). */
@@ -330,7 +371,8 @@ int session_send(session_t *s, const uint8_t *buf, uint32_t len)
         return SESSION_ERR_TOOBIG;
     }
     int rc = SESSION_OK;
-    if (send_u32(s->fd, (uint32_t)enc_block) < 0 || send_all(s->fd, message, enc_block) < 0)
+    if (send_u32(s->fd, (uint32_t)enc_block) < 0 ||
+        send_all(s->fd, message, enc_block) < 0)
         rc = SESSION_ERR_IO;
     free(message);
     return rc;
@@ -338,9 +380,11 @@ int session_send(session_t *s, const uint8_t *buf, uint32_t len)
 
 int session_recv(session_t *s, uint8_t *buf, uint32_t *len)
 {
-    if (!s->established)
+    log_send(LOG_DEBUG, "receiving encrypted frame fd=%d capacity=%u", s->fd,
+             *len);
+    if (!s->established || s->recv_dead)
     {
-        TSSH_LOG("tetrissh: recv before handshake\n");
+        TSSH_LOG("tetrissh: recv before handshake, or after a desync\n");
         return SESSION_ERR_PROTO;
     }
     uint32_t token_len;
@@ -349,7 +393,10 @@ int session_recv(session_t *s, uint8_t *buf, uint32_t *len)
 
     if (token_len > SESSION_MAX_FRAME)
     {
-        s->established = 0; /* stream out of sync — unrecoverable (A3) */
+        /* Only the receive side dies. We never consumed the oversize body, so
+         * what we are being FED is out of sync - but nothing is wrong with
+         * what we write, and the caller still owes the peer a 413. */
+        s->recv_dead = 1;
         return SESSION_ERR_TOOBIG;
     }
 
@@ -357,7 +404,8 @@ int session_recv(session_t *s, uint8_t *buf, uint32_t *len)
     if (!token)
         return SESSION_ERR_IO;
     size_t plain_len;
-    unsigned char *plain = session_decrypt(s->key, token, token_len, &plain_len);
+    unsigned char *plain =
+        session_decrypt(s->key, token, token_len, &plain_len);
     free(token);
     if (!plain)
         return SESSION_ERR_CRYPTO;
@@ -369,14 +417,17 @@ int session_recv(session_t *s, uint8_t *buf, uint32_t *len)
      * ~2000 ns decrypt, so the cost of the frames that carry nothing secret is
      * far below the cost of a caller forgetting which function to call.
      * plain_len, not the malloc'd ct_len: the padding tail is never written. */
-    if (plain_len > *len)
+    /* No sequence check: a replayed frame decrypts and authenticates exactly
+     * like the original, and is handed to the caller as if it were new. */
+    size_t body_len = plain_len;
+    if (body_len > *len)
     {
         OPENSSL_cleanse(plain, plain_len);
         free(plain);
         return SESSION_ERR_NOSPACE; /* frame consumed; stream still in sync */
     }
-    memcpy(buf, plain, plain_len);
-    *len = (uint32_t)plain_len;
+    memcpy(buf, plain, body_len);
+    *len = (uint32_t)body_len;
     OPENSSL_cleanse(plain, plain_len);
     free(plain);
     return SESSION_OK;

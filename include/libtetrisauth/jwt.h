@@ -17,7 +17,7 @@
  * why it sits outside src/libtetrissh/ despite that library already having the
  * HMAC and CRYPTO_memcmp patterns - common.h drags in the whole certificate
  * surface, and buying a transport library to reach 15 lines is the wrong
- * trade. bin/test_jwt links -lcrypto only, so the boundary is a build failure.
+ * trade. bin/tests/test_jwt links -lcrypto only, so the boundary is a build failure.
  * It catches USING a symbol, not merely including a header: a bare #include
  * still compiles, and has to be caught by review.
  *
@@ -55,15 +55,16 @@
 /** Longest token this can mint or accept, NUL included. The real maximum is
  * 185: header 36, payload 104 at a 15-character name and a 10-digit id,
  * signature 43, two dots. */
-#define JWT_MAX_LEN        256
+#define JWT_MAX_LEN 256
 /** RFC 7518 3.2: a secret at least the hash output size. */
 #define JWT_SECRET_MIN_LEN 32
 
-typedef struct {
-    long long sub;      /**< User id. */
-    char      name[16]; /**< 15 characters plus NUL, #47's cap. */
-    long long iat;      /**< Issued at; an input to jwt_mint(), not computed. */
-    long long exp;      /**< Expiry; likewise. */
+typedef struct
+{
+    long long sub; /**< User id. */
+    char name[16]; /**< 15 characters plus NUL, #47's cap. */
+    long long iat; /**< Issued at; an input to jwt_mint(), not computed. */
+    long long exp; /**< Expiry; likewise. */
 } jwt_claims_t;
 
 /**
@@ -101,12 +102,13 @@ int jwt_mint(char *out, size_t out_len, const jwt_claims_t *claims,
  * nothing here verifies a token; the reuse project inherits the warning where
  * it can be tripped over.
  */
-typedef enum {
+typedef enum
+{
     JWT_OK = 0,
     JWT_E_MALFORMED, /**< Not three segments, bad base64url, bad JSON shape. */
     JWT_E_SIGNATURE, /**< MAC mismatch, or a signature that is not 32 bytes. */
-    JWT_E_ALG,       /**< alg absent, not "HS256", or an unknown header param. */
-    JWT_E_CLAIMS,    /**< A required claim missing or malformed. */
+    JWT_E_ALG,    /**< alg absent, not "HS256", or an unknown header param. */
+    JWT_E_CLAIMS, /**< A required claim missing or malformed. */
     JWT_E_EXPIRED
 } jwt_result_t;
 
@@ -124,8 +126,7 @@ typedef enum {
  * @param out         Zeroed on entry and on every failure.
  * @returns JWT_OK, or the reason for rejection.
  */
-jwt_result_t jwt_verify(const char *token,
-                        const unsigned char *secret, size_t secret_len,
-                        time_t now, jwt_claims_t *out);
+jwt_result_t jwt_verify(const char *token, const unsigned char *secret,
+                        size_t secret_len, time_t now, jwt_claims_t *out);
 
 #endif /* LIBTETRISAUTH_JWT_H */

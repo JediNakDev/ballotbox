@@ -1,37 +1,12 @@
 /**
  * @file jwt.c
- * @brief JWT/HS256 mint and verify. #53.
- *
- * Contract, and the reasoning that produced it, in
- * include/libtetrisauth/jwt.h. Read that first; this file holds the how.
- *
- * THIS FILE MUST NOT INCLUDE ANYTHING FROM libtetrissh, libhtttp, libtetrisutil OR
- * libtetrisdb. Its only reason to exist as a separate pair is that it can be
- * copied into another tree and compile there against <openssl/hmac.h> and
- * <openssl/crypto.h> alone. bin/test_jwt links -lcrypto only, so breaking that
- * rule is a build failure rather than a review comment - which is the point.
- *
- * WHAT TRAVELS IS TWO FILES: jwt.c and jwt.h. base64url and the JSON reader
- * are statics below, which is what #53 decided - one file pair, "with
- * base64url and the JSON layer as statics inside it". Each had exactly one
- * consumer, so a header apiece exported a seam nothing varied across.
- *
- * What is left in here is the token: the fixed header string, the one snprintf
- * that is the whole JSON writer, the two HMAC call sites, and the two public
- * functions.
- *
- * Two mistakes in this file leave the tests green, which is why it is the one
- * file worth reading the header twice for:
- *   - reading a claim before the CRYPTO_memcmp;
- *   - signing over a re-encoding rather than the received bytes.
- * jwt_verify()'s shape is what makes both of those visible edits rather than
- * accidents: the signing input is a pointer into the caller's buffer, and the
- * decoded buffers are declared below the compare. Keep that shape.
+ * @brief JWT/HS256 mint and verify.
  */
 
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
+#include "libtetrisutil/logmsg.h"
 
 #include <openssl/crypto.h>
 #include <openssl/hmac.h>
@@ -70,108 +45,356 @@ static const char B64_ENC[] =
  * 0x60 starts 'a'=26. Every other slot is -1.
  */
 static const signed char B64_DEC[256] = {
-    /* 0x00 */ -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    /* 0x10 */ -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    /* 0x20 */ -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1,
-    /* 0x30 */ 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -1, -1, -1, -1, -1, -1,
-    /* 0x40 */ -1, 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14,
-    /* 0x50 */ 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, 63,
-    /* 0x60 */ -1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-    /* 0x70 */ 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1,
-    /* 0x80 */ -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    /* 0x90 */ -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    /* 0xa0 */ -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    /* 0xb0 */ -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    /* 0xc0 */ -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    /* 0xd0 */ -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    /* 0xe0 */ -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    /* 0xf0 */ -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    /* 0x00 */ -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    /* 0x10 */ -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    /* 0x20 */ -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    62,
+    -1,
+    -1,
+    /* 0x30 */ 52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    /* 0x40 */ -1,
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    /* 0x50 */ 15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    -1,
+    -1,
+    -1,
+    -1,
+    63,
+    /* 0x60 */ -1,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    /* 0x70 */ 41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    /* 0x80 */ -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    /* 0x90 */ -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    /* 0xa0 */ -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    /* 0xb0 */ -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    /* 0xc0 */ -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    /* 0xd0 */ -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    /* 0xe0 */ -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    /* 0xf0 */ -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
+    -1,
 };
 
-static int b64url_decoded_len(size_t in_len) {
-  size_t rem = in_len % 4;
-  if (rem == 1)
-    return -1;
-  return (int)(in_len / 4 * 3 + (rem == 0 ? 0 : rem - 1));
+static int b64url_decoded_len(size_t in_len)
+{
+    size_t rem = in_len % 4;
+    if (rem == 1)
+        return -1;
+    return (int)(in_len / 4 * 3 + (rem == 0 ? 0 : rem - 1));
 }
 
 static int b64url_decode(unsigned char *out, size_t out_cap, const char *in,
-                  size_t in_len) {
-  int want = b64url_decoded_len(in_len);
-  if (want < 0 || (size_t)want > out_cap)
-    return -1;
-
-  size_t o = 0, i = 0;
-  for (; i + 4 <= in_len; i += 4) {
-    int a = B64_DEC[(unsigned char)in[i]];
-    int b = B64_DEC[(unsigned char)in[i + 1]];
-    int c = B64_DEC[(unsigned char)in[i + 2]];
-    int d = B64_DEC[(unsigned char)in[i + 3]];
-    if (a < 0 || b < 0 || c < 0 || d < 0)
-      return -1;
-    unsigned v =
-        (unsigned)a << 18 | (unsigned)b << 12 | (unsigned)c << 6 | (unsigned)d;
-    out[o++] = (unsigned char)(v >> 16);
-    out[o++] = (unsigned char)(v >> 8);
-    out[o++] = (unsigned char)v;
-  }
-
-  size_t rem = in_len - i;
-  if (rem >= 2) {
-    int a = B64_DEC[(unsigned char)in[i]];
-    int b = B64_DEC[(unsigned char)in[i + 1]];
-    if (a < 0 || b < 0)
-      return -1;
-    unsigned v = (unsigned)a << 18 | (unsigned)b << 12;
-    if (rem == 3) {
-      int c = B64_DEC[(unsigned char)in[i + 2]];
-      if (c < 0)
+                         size_t in_len)
+{
+    int want = b64url_decoded_len(in_len);
+    if (want < 0 || (size_t)want > out_cap)
         return -1;
-      v |= (unsigned)c << 6;
+
+    size_t o = 0, i = 0;
+    for (; i + 4 <= in_len; i += 4)
+    {
+        int a = B64_DEC[(unsigned char)in[i]];
+        int b = B64_DEC[(unsigned char)in[i + 1]];
+        int c = B64_DEC[(unsigned char)in[i + 2]];
+        int d = B64_DEC[(unsigned char)in[i + 3]];
+        if (a < 0 || b < 0 || c < 0 || d < 0)
+            return -1;
+        unsigned v = (unsigned)a << 18 | (unsigned)b << 12 | (unsigned)c << 6 |
+                     (unsigned)d;
+        out[o++] = (unsigned char)(v >> 16);
+        out[o++] = (unsigned char)(v >> 8);
+        out[o++] = (unsigned char)v;
     }
-    /*
-     * The bits a short tail does not spend must be zero. Two characters carry
-     * 12 bits and yield one byte, three carry 18 and yield two. Requiring the
-     * remainder to be zero keeps the encoding canonical, so a token cannot be
-     * rewritten into a different string that still verifies. Every encoder,
-     * including the one below, zero-fills them.
-     */
-    if ((v & (rem == 2 ? 0xffffu : 0xffu)) != 0)
-      return -1;
-    out[o++] = (unsigned char)(v >> 16);
-    if (rem == 3)
-      out[o++] = (unsigned char)(v >> 8);
-  }
-  return (int)o;
+
+    size_t rem = in_len - i;
+    if (rem >= 2)
+    {
+        int a = B64_DEC[(unsigned char)in[i]];
+        int b = B64_DEC[(unsigned char)in[i + 1]];
+        if (a < 0 || b < 0)
+            return -1;
+        unsigned v = (unsigned)a << 18 | (unsigned)b << 12;
+        if (rem == 3)
+        {
+            int c = B64_DEC[(unsigned char)in[i + 2]];
+            if (c < 0)
+                return -1;
+            v |= (unsigned)c << 6;
+        }
+        /*
+         * The bits a short tail does not spend must be zero. Two characters
+         * carry 12 bits and yield one byte, three carry 18 and yield two.
+         * Requiring the remainder to be zero keeps the encoding canonical, so a
+         * token cannot be rewritten into a different string that still
+         * verifies. Every encoder, including the one below, zero-fills them.
+         */
+        if ((v & (rem == 2 ? 0xffffu : 0xffu)) != 0)
+            return -1;
+        out[o++] = (unsigned char)(v >> 16);
+        if (rem == 3)
+            out[o++] = (unsigned char)(v >> 8);
+    }
+    return (int)o;
 }
 
 static int b64url_encode(char *out, size_t out_cap, const unsigned char *in,
-                  size_t in_len) {
-  size_t rem = in_len % 3;
-  size_t need = in_len / 3 * 4 + (rem == 0 ? 0 : rem + 1);
-  if (need + 1 > out_cap)
-    return -1;
+                         size_t in_len)
+{
+    size_t rem = in_len % 3;
+    size_t need = in_len / 3 * 4 + (rem == 0 ? 0 : rem + 1);
+    if (need + 1 > out_cap)
+        return -1;
 
-  size_t o = 0, i = 0;
-  for (; i + 3 <= in_len; i += 3) {
-    unsigned v =
-        (unsigned)in[i] << 16 | (unsigned)in[i + 1] << 8 | (unsigned)in[i + 2];
-    out[o++] = B64_ENC[v >> 18 & 63];
-    out[o++] = B64_ENC[v >> 12 & 63];
-    out[o++] = B64_ENC[v >> 6 & 63];
-    out[o++] = B64_ENC[v & 63];
-  }
-  if (rem > 0) {
-    unsigned v = (unsigned)in[i] << 16;
-    if (rem == 2)
-      v |= (unsigned)in[i + 1] << 8;
-    out[o++] = B64_ENC[v >> 18 & 63];
-    out[o++] = B64_ENC[v >> 12 & 63];
-    if (rem == 2)
-      out[o++] = B64_ENC[v >> 6 & 63];
-  }
-  out[o] = '\0';
-  return (int)o;
+    size_t o = 0, i = 0;
+    for (; i + 3 <= in_len; i += 3)
+    {
+        unsigned v = (unsigned)in[i] << 16 | (unsigned)in[i + 1] << 8 |
+                     (unsigned)in[i + 2];
+        out[o++] = B64_ENC[v >> 18 & 63];
+        out[o++] = B64_ENC[v >> 12 & 63];
+        out[o++] = B64_ENC[v >> 6 & 63];
+        out[o++] = B64_ENC[v & 63];
+    }
+    if (rem > 0)
+    {
+        unsigned v = (unsigned)in[i] << 16;
+        if (rem == 2)
+            v |= (unsigned)in[i + 1] << 8;
+        out[o++] = B64_ENC[v >> 18 & 63];
+        out[o++] = B64_ENC[v >> 12 & 63];
+        if (rem == 2)
+            out[o++] = B64_ENC[v >> 6 & 63];
+    }
+    out[o] = '\0';
+    return (int)o;
 }
 
 /* ====================================================================== *
@@ -193,44 +416,50 @@ static int b64url_encode(char *out, size_t out_cap, const unsigned char *in,
  * Not a general JSON reader, and must not become one.                     *
  * ====================================================================== */
 
-typedef enum {
-  JSON_STRING, /* slice excludes the quotes and is still escaped   */
-  JSON_BARE    /* a bare token; only json_int() validates its text */
+typedef enum
+{
+    JSON_STRING, /* slice excludes the quotes and is still escaped   */
+    JSON_BARE    /* a bare token; only json_int() validates its text */
 } json_kind_t;
 
 /* One top-level member, as two slices into the buffer being walked. Nothing is
  * copied and nothing is NUL-terminated. */
-typedef struct {
-  const char *key;
-  size_t key_len;
-  const char *val;
-  size_t val_len;
-  json_kind_t kind;
+typedef struct
+{
+    const char *key;
+    size_t key_len;
+    const char *val;
+    size_t val_len;
+    json_kind_t kind;
 } json_member_t;
 
-typedef struct {
-  const char *p; /* just past the last value yielded */
-  const char *end;
-  size_t count; /* members yielded so far */
+typedef struct
+{
+    const char *p; /* just past the last value yielded */
+    const char *end;
+    size_t count; /* members yielded so far */
 } json_iter_t;
 
-static void json_iter_init(json_iter_t *it, const char *buf, size_t len) {
-  it->p = buf;
-  it->end = buf + len;
-  it->count = 0;
+static void json_iter_init(json_iter_t *it, const char *buf, size_t len)
+{
+    it->p = buf;
+    it->end = buf + len;
+    it->count = 0;
 }
 
 /* Advance past spaces, tabs, CR and LF. */
-static const char *skip_ws(const char *p, const char *end) {
-  while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'))
-    p++;
-  return p;
+static const char *skip_ws(const char *p, const char *end)
+{
+    while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'))
+        p++;
+    return p;
 }
 
 /* Check that nothing but whitespace follows the closing brace. Trailing bytes
  * are a rejection, not something to stop reading at. */
-static int json_end(const char *p, const char *end) {
-  return skip_ws(p, end) == end ? 0 : -1;
+static int json_end(const char *p, const char *end)
+{
+    return skip_ws(p, end) == end ? 0 : -1;
 }
 
 /*
@@ -242,112 +471,128 @@ static int json_end(const char *p, const char *end) {
  * string; it never decodes an escape. Raw control characters are rejected.
  */
 static int json_string(const char **p, const char *end, const char **val,
-                       size_t *val_len) {
-  const char *q = *p + 1;
-  const char *start = q;
+                       size_t *val_len)
+{
+    const char *q = *p + 1;
+    const char *start = q;
 
-  while (q < end && *q != '"') {
-    if ((unsigned char)*q < 0x20)
-      return -1; /* raw control character; RFC 8259 s7 */
-    if (*q == '\\') {
-      q++; /* just enough understanding of '\' not to stop at \" */
-      if (q == end)
-        return -1;
+    while (q < end && *q != '"')
+    {
+        if ((unsigned char)*q < 0x20)
+            return -1; /* raw control character; RFC 8259 s7 */
+        if (*q == '\\')
+        {
+            q++; /* just enough understanding of '\' not to stop at \" */
+            if (q == end)
+                return -1;
+        }
+        q++;
     }
-    q++;
-  }
-  if (q == end)
-    return -1;
+    if (q == end)
+        return -1;
 
-  *val = start;
-  *val_len = (size_t)(q - start);
-  *p = q + 1;
-  return 0;
+    *val = start;
+    *val_len = (size_t)(q - start);
+    *p = q + 1;
+    return 0;
 }
 
-static int json_next(json_iter_t *it, json_member_t *m) {
-  const char *end = it->end;
-  const char *p;
+static int json_next(json_iter_t *it, json_member_t *m)
+{
+    const char *end = it->end;
+    const char *p;
 
-  if (it->count == 0) {
-    p = skip_ws(it->p, end);
-    if (p == end || *p++ != '{')
-      return -1;
+    if (it->count == 0)
+    {
+        p = skip_ws(it->p, end);
+        if (p == end || *p++ != '{')
+            return -1;
+        p = skip_ws(p, end);
+        if (p < end && *p == '}')
+            return json_end(p + 1, end); /* {} */
+    }
+    else
+    {
+        p = skip_ws(it->p, end);
+        if (p == end)
+            return -1; /* no closing brace */
+        if (*p == '}')
+            return json_end(p + 1, end);
+        if (*p++ != ',')
+            return -1; /* two members with nothing between them */
+        p = skip_ws(p, end);
+        /* A '}' here is a trailing comma, and falls into the key check below.
+         */
+    }
+
+    if (p == end || *p != '"')
+        return -1;
+    if (json_string(&p, end, &m->key, &m->key_len) != 0)
+        return -1;
+
     p = skip_ws(p, end);
-    if (p < end && *p == '}')
-      return json_end(p + 1, end); /* {} */
-  } else {
-    p = skip_ws(it->p, end);
+    if (p == end || *p++ != ':')
+        return -1;
+    p = skip_ws(p, end);
     if (p == end)
-      return -1; /* no closing brace */
-    if (*p == '}')
-      return json_end(p + 1, end);
-    if (*p++ != ',')
-      return -1; /* two members with nothing between them */
-    p = skip_ws(p, end);
-    /* A '}' here is a trailing comma, and falls into the key check below. */
-  }
+        return -1;
 
-  if (p == end || *p != '"')
-    return -1;
-  if (json_string(&p, end, &m->key, &m->key_len) != 0)
-    return -1;
+    if (*p == '"')
+    {
+        m->kind = JSON_STRING;
+        if (json_string(&p, end, &m->val, &m->val_len) != 0)
+            return -1;
+    }
+    else if (*p == '{' || *p == '[')
+    {
+        return -1; /* nesting; see the header */
+    }
+    else
+    {
+        const char *start = p;
+        while (p < end && *p != ',' && *p != '}' && *p != ' ' && *p != '\t' &&
+               *p != '\n' && *p != '\r')
+            p++;
+        if (p == start)
+            return -1;
+        m->kind = JSON_BARE;
+        m->val = start;
+        m->val_len = (size_t)(p - start);
+    }
 
-  p = skip_ws(p, end);
-  if (p == end || *p++ != ':')
-    return -1;
-  p = skip_ws(p, end);
-  if (p == end)
-    return -1;
-
-  if (*p == '"') {
-    m->kind = JSON_STRING;
-    if (json_string(&p, end, &m->val, &m->val_len) != 0)
-      return -1;
-  } else if (*p == '{' || *p == '[') {
-    return -1; /* nesting; see the header */
-  } else {
-    const char *start = p;
-    while (p < end && *p != ',' && *p != '}' && *p != ' ' && *p != '\t' &&
-           *p != '\n' && *p != '\r')
-      p++;
-    if (p == start)
-      return -1;
-    m->kind = JSON_BARE;
-    m->val = start;
-    m->val_len = (size_t)(p - start);
-  }
-
-  it->p = p;
-  it->count++;
-  return 1;
+    it->p = p;
+    it->count++;
+    return 1;
 }
 
-static int json_slice_is(const char *s, size_t len, const char *lit) {
-  return strlen(lit) == len && memcmp(s, lit, len) == 0;
+static int json_slice_is(const char *s, size_t len, const char *lit)
+{
+    return strlen(lit) == len && memcmp(s, lit, len) == 0;
 }
 
 /** Finds one key: 1 found, 0 absent, -1 malformed OR duplicated. The duplicate
  * rejection is the part that matters - "last one wins" is how a smuggled claim
  * slips past a check that read the first copy. */
 static int json_find(const char *buf, size_t len, const char *key,
-                     json_member_t *m) {
-  json_iter_t it;
-  json_member_t cur;
-  int found = 0, rc;
+                     json_member_t *m)
+{
+    json_iter_t it;
+    json_member_t cur;
+    int found = 0, rc;
 
-  json_iter_init(&it, buf, len);
-  while ((rc = json_next(&it, &cur)) == 1) {
-    if (!json_slice_is(cur.key, cur.key_len, key))
-      continue;
-    if (found)
-      return -1; /* duplicate */
-    found = 1;
-    *m = cur;
-  }
-  if (rc < 0)
-    return -1;
-  return found;
+    json_iter_init(&it, buf, len);
+    while ((rc = json_next(&it, &cur)) == 1)
+    {
+        if (!json_slice_is(cur.key, cur.key_len, key))
+            continue;
+        if (found)
+            return -1; /* duplicate */
+        found = 1;
+        *m = cur;
+    }
+    if (rc < 0)
+        return -1;
+    return found;
 }
 
 /* LLONG_MIN is one short of representable here and is rejected as overflow; no
@@ -355,33 +600,36 @@ static int json_find(const char *buf, size_t len, const char *key,
 /** Reads -?[0-9]+ over exactly the slice, which is not NUL-terminated. strtol
  * would accept leading whitespace and a '+' and stop silently at the first junk
  * character; leading zeros, trailing junk and overflow are rejected here. */
-static int json_int(const char *s, size_t len, long long *out) {
-  size_t i = 0;
-  int neg = 0;
-  unsigned long long acc = 0;
+static int json_int(const char *s, size_t len, long long *out)
+{
+    size_t i = 0;
+    int neg = 0;
+    unsigned long long acc = 0;
 
-  if (i < len && s[i] == '-') {
-    neg = 1;
-    i++;
-  }
-  if (i == len)
-    return -1;
-  if (s[i] == '0' && len - i > 1)
-    return -1;
+    if (i < len && s[i] == '-')
+    {
+        neg = 1;
+        i++;
+    }
+    if (i == len)
+        return -1;
+    if (s[i] == '0' && len - i > 1)
+        return -1;
 
-  for (; i < len; i++) {
-    if (s[i] < '0' || s[i] > '9')
-      return -1;
-    unsigned d = (unsigned)(s[i] - '0');
-    if (acc > (unsigned long long)LLONG_MAX / 10)
-      return -1;
-    acc *= 10;
-    if (acc > (unsigned long long)LLONG_MAX - d)
-      return -1;
-    acc += d;
-  }
-  *out = neg ? -(long long)acc : (long long)acc;
-  return 0;
+    for (; i < len; i++)
+    {
+        if (s[i] < '0' || s[i] > '9')
+            return -1;
+        unsigned d = (unsigned)(s[i] - '0');
+        if (acc > (unsigned long long)LLONG_MAX / 10)
+            return -1;
+        acc *= 10;
+        if (acc > (unsigned long long)LLONG_MAX - d)
+            return -1;
+        acc += d;
+    }
+    *out = neg ? -(long long)acc : (long long)acc;
+    return 0;
 }
 
 /* HMAC-SHA256 output size. Local rather than libtetrissh's HMAC_LEN, because
@@ -410,12 +658,13 @@ static const char JWT_HDR_JSON[] = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
  * copyable into another tree. */
 static int hmac_sha256(unsigned char mac[JWT_SIG_LEN],
                        const unsigned char *secret, size_t secret_len,
-                       const void *msg, size_t msg_len) {
-  unsigned int mac_len = 0;
-  if (HMAC(EVP_sha256(), secret, (int)secret_len, (const unsigned char *)msg,
-           msg_len, mac, &mac_len) == NULL)
-    return -1;
-  return mac_len == JWT_SIG_LEN ? 0 : -1;
+                       const void *msg, size_t msg_len)
+{
+    unsigned int mac_len = 0;
+    if (HMAC(EVP_sha256(), secret, (int)secret_len, (const unsigned char *)msg,
+             msg_len, mac, &mac_len) == NULL)
+        return -1;
+    return mac_len == JWT_SIG_LEN ? 0 : -1;
 }
 
 /*
@@ -433,24 +682,27 @@ static int hmac_sha256(unsigned char mac[JWT_SIG_LEN],
  * pair with the fold - copying it there and deleting it here is the move, not
  * reaching into the token layer for it.
  */
-static int name_ok(const char *s, size_t len) {
-  if (len == 0 || len > JWT_NAME_MAX)
-    return 0;
-  for (size_t i = 0; i < len; i++) {
-    char c = s[i];
-    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-        (c >= '0' && c <= '9') || c == '_' || c == '-')
-      continue;
-    return 0;
-  }
-  return 1;
+static int name_ok(const char *s, size_t len)
+{
+    if (len == 0 || len > JWT_NAME_MAX)
+        return 0;
+    for (size_t i = 0; i < len; i++)
+    {
+        char c = s[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '_' || c == '-')
+            continue;
+        return 0;
+    }
+    return 1;
 }
 
 /* A secret this file will use: non-NULL, at least JWT_SECRET_MIN_LEN bytes,
  * and small enough for OpenSSL's int length parameter. */
-static int secret_ok(const unsigned char *secret, size_t secret_len) {
-  return secret != NULL && secret_len >= JWT_SECRET_MIN_LEN &&
-         secret_len <= (size_t)INT_MAX;
+static int secret_ok(const unsigned char *secret, size_t secret_len)
+{
+    return secret != NULL && secret_len >= JWT_SECRET_MIN_LEN &&
+           secret_len <= (size_t)INT_MAX;
 }
 
 /* ====================================================================== *
@@ -466,16 +718,17 @@ static int secret_ok(const unsigned char *secret, size_t secret_len) {
  * the name is re-validated here rather than trusted: widening the allowlist
  * later would otherwise silently produce malformed JSON in this function.
  */
-static int write_payload(char *pay, size_t cap, const jwt_claims_t *claims) {
-  if (memchr(claims->name, '\0', sizeof claims->name) == NULL)
-    return -1;
-  if (!name_ok(claims->name, strlen(claims->name)))
-    return -1;
+static int write_payload(char *pay, size_t cap, const jwt_claims_t *claims)
+{
+    if (memchr(claims->name, '\0', sizeof claims->name) == NULL)
+        return -1;
+    if (!name_ok(claims->name, strlen(claims->name)))
+        return -1;
 
-  int n = snprintf(pay, cap,
-                   "{\"sub\":%lld,\"name\":\"%s\",\"iat\":%lld,\"exp\":%lld}",
-                   claims->sub, claims->name, claims->iat, claims->exp);
-  return (n < 0 || (size_t)n >= cap) ? -1 : n;
+    int n = snprintf(pay, cap,
+                     "{\"sub\":%lld,\"name\":\"%s\",\"iat\":%lld,\"exp\":%lld}",
+                     claims->sub, claims->name, claims->iat, claims->exp);
+    return (n < 0 || (size_t)n >= cap) ? -1 : n;
 }
 
 /*
@@ -488,60 +741,78 @@ static int write_payload(char *pay, size_t cap, const jwt_claims_t *claims) {
  * values it was built from.
  */
 static int write_token(char *tok, size_t cap, const char *pay, size_t pay_len,
-                       const unsigned char *secret, size_t secret_len) {
-  int k = b64url_encode(tok, cap, (const unsigned char *)JWT_HDR_JSON,
-                        sizeof JWT_HDR_JSON - 1);
-  if (k < 0)
-    return -1;
-  size_t n = (size_t)k;
+                       const unsigned char *secret, size_t secret_len)
+{
+    int k = b64url_encode(tok, cap, (const unsigned char *)JWT_HDR_JSON,
+                          sizeof JWT_HDR_JSON - 1);
+    if (k < 0)
+        return -1;
+    size_t n = (size_t)k;
 
-  if (n + 1 >= cap)
-    return -1;
-  tok[n++] = '.';
+    if (n + 1 >= cap)
+        return -1;
+    tok[n++] = '.';
 
-  k = b64url_encode(tok + n, cap - n, (const unsigned char *)pay, pay_len);
-  if (k < 0)
-    return -1;
-  n += (size_t)k;
+    k = b64url_encode(tok + n, cap - n, (const unsigned char *)pay, pay_len);
+    if (k < 0)
+        return -1;
+    n += (size_t)k;
 
-  unsigned char mac[JWT_SIG_LEN];
-  if (hmac_sha256(mac, secret, secret_len, tok, n) != 0)
-    return -1;
+    unsigned char mac[JWT_SIG_LEN];
+    if (hmac_sha256(mac, secret, secret_len, tok, n) != 0)
+        return -1;
 
-  if (n + 1 >= cap)
-    return -1;
-  tok[n++] = '.';
+    if (n + 1 >= cap)
+        return -1;
+    tok[n++] = '.';
 
-  k = b64url_encode(tok + n, cap - n, mac, sizeof mac);
-  if (k < 0)
-    return -1;
-  return (int)(n + (size_t)k);
+    k = b64url_encode(tok + n, cap - n, mac, sizeof mac);
+    if (k < 0)
+        return -1;
+    return (int)(n + (size_t)k);
 }
 
 /* Build the payload, build the token, hand it over. Returns -1 rather than
  * truncating if anything does not fit. Contract in jwt.h. */
 int jwt_mint(char *out, size_t out_len, const jwt_claims_t *claims,
-             const unsigned char *secret, size_t secret_len) {
-  if (out != NULL && out_len > 0)
-    out[0] = '\0';
-  if (out == NULL || claims == NULL || !secret_ok(secret, secret_len))
-    return -1;
+             const unsigned char *secret, size_t secret_len)
+{
+    if (claims != NULL)
+        log_send(LOG_DEBUG, "minting authentication token subject=%lld user=%s",
+                 claims->sub, claims->name);
+    if (out != NULL && out_len > 0)
+        out[0] = '\0';
+    if (out == NULL || claims == NULL || !secret_ok(secret, secret_len))
+    {
+        (void)log_send(LOG_INFO, "operation=jwt_mint phase=complete status=-1");
+        return -1;
+    }
 
-  char pay[JWT_PAYLOAD_MAX];
-  int pay_len = write_payload(pay, sizeof pay, claims);
-  if (pay_len < 0)
-    return -1;
+    char pay[JWT_PAYLOAD_MAX];
+    int pay_len = write_payload(pay, sizeof pay, claims);
+    if (pay_len < 0)
+    {
+        (void)log_send(LOG_INFO, "operation=jwt_mint phase=complete status=-1");
+        return -1;
+    }
 
-  char tok[JWT_MAX_LEN];
-  int tok_len =
-      write_token(tok, sizeof tok, pay, (size_t)pay_len, secret, secret_len);
-  if (tok_len < 0)
-    return -1;
+    char tok[JWT_MAX_LEN];
+    int tok_len =
+        write_token(tok, sizeof tok, pay, (size_t)pay_len, secret, secret_len);
+    if (tok_len < 0)
+    {
+        (void)log_send(LOG_INFO, "operation=jwt_mint phase=complete status=-1");
+        return -1;
+    }
 
-  if ((size_t)tok_len + 1 > out_len)
-    return -1;
-  memcpy(out, tok, (size_t)tok_len + 1);
-  return 0;
+    if ((size_t)tok_len + 1 > out_len)
+    {
+        (void)log_send(LOG_INFO, "operation=jwt_mint phase=complete status=-1");
+        return -1;
+    }
+    memcpy(out, tok, (size_t)tok_len + 1);
+    (void)log_send(LOG_INFO, "operation=jwt_mint phase=complete status=0");
+    return 0;
 }
 
 /* ====================================================================== *
@@ -563,67 +834,70 @@ int jwt_mint(char *out, size_t out_len, const jwt_claims_t *claims,
 
 /* A slice of the token. Pointer and length into the CALLER'S buffer; nothing
  * here is ever copied. */
-typedef struct {
-  const char *p;
-  size_t len;
+typedef struct
+{
+    const char *p;
+    size_t len;
 } seg_t;
 
-typedef struct {
-  seg_t hdr, pay, sig;
-  seg_t signing; /* hdr through the end of pay: the bytes the MAC covers */
+typedef struct
+{
+    seg_t hdr, pay, sig;
+    seg_t signing; /* hdr through the end of pay: the bytes the MAC covers */
 } jwt_parts_t;
 
 /* Exactly two dots and three non-empty segments. */
-static jwt_result_t split_token(const char *token, size_t len,
-                                jwt_parts_t *out) {
-  const char *dot1 = memchr(token, '.', len);
-  if (dot1 == NULL || dot1 == token)
-    return JWT_E_MALFORMED;
+static jwt_result_t split_token(const char *token, size_t len, jwt_parts_t *out)
+{
+    const char *dot1 = memchr(token, '.', len);
+    if (dot1 == NULL || dot1 == token)
+        return JWT_E_MALFORMED;
 
-  const char *dot2 = memchr(dot1 + 1, '.', len - (size_t)(dot1 + 1 - token));
-  if (dot2 == NULL || dot2 == dot1 + 1)
-    return JWT_E_MALFORMED;
+    const char *dot2 = memchr(dot1 + 1, '.', len - (size_t)(dot1 + 1 - token));
+    if (dot2 == NULL || dot2 == dot1 + 1)
+        return JWT_E_MALFORMED;
 
-  const char *sig = dot2 + 1;
-  size_t sig_len = len - (size_t)(sig - token);
-  if (sig_len == 0 || memchr(sig, '.', sig_len) != NULL)
-    return JWT_E_MALFORMED;
+    const char *sig = dot2 + 1;
+    size_t sig_len = len - (size_t)(sig - token);
+    if (sig_len == 0 || memchr(sig, '.', sig_len) != NULL)
+        return JWT_E_MALFORMED;
 
-  out->hdr.p = token;
-  out->hdr.len = (size_t)(dot1 - token);
-  out->pay.p = dot1 + 1;
-  out->pay.len = (size_t)(dot2 - (dot1 + 1));
-  out->sig.p = sig;
-  out->sig.len = sig_len;
+    out->hdr.p = token;
+    out->hdr.len = (size_t)(dot1 - token);
+    out->pay.p = dot1 + 1;
+    out->pay.len = (size_t)(dot2 - (dot1 + 1));
+    out->sig.p = sig;
+    out->sig.len = sig_len;
 
-  /* The received bytes, verbatim. This is the only place a signing input is
-   * ever constructed, and it is constructed before anything has been decoded -
-   * so the re-encoding that would differ in whitespace or key order does not
-   * exist to be signed. */
-  out->signing.p = token;
-  out->signing.len = (size_t)(dot2 - token);
-  return JWT_OK;
+    /* The received bytes, verbatim. This is the only place a signing input is
+     * ever constructed, and it is constructed before anything has been decoded
+     * - so the re-encoding that would differ in whitespace or key order does
+     * not exist to be signed. */
+    out->signing.p = token;
+    out->signing.len = (size_t)(dot2 - token);
+    return JWT_OK;
 }
 
 /* Decode the signature, reject it on length BEFORE any comparison, then MAC
  * the signing input and compare in constant time. */
 static jwt_result_t check_signature(seg_t signing, seg_t sig_seg,
                                     const unsigned char *secret,
-                                    size_t secret_len) {
-  int want = b64url_decoded_len(sig_seg.len);
-  if (want < 0)
-    return JWT_E_MALFORMED;
-  if (want != JWT_SIG_LEN)
-    return JWT_E_SIGNATURE;
+                                    size_t secret_len)
+{
+    int want = b64url_decoded_len(sig_seg.len);
+    if (want < 0)
+        return JWT_E_MALFORMED;
+    if (want != JWT_SIG_LEN)
+        return JWT_E_SIGNATURE;
 
-  unsigned char sig[JWT_SIG_LEN];
-  if (b64url_decode(sig, sizeof sig, sig_seg.p, sig_seg.len) != JWT_SIG_LEN)
-    return JWT_E_MALFORMED;
+    unsigned char sig[JWT_SIG_LEN];
+    if (b64url_decode(sig, sizeof sig, sig_seg.p, sig_seg.len) != JWT_SIG_LEN)
+        return JWT_E_MALFORMED;
 
-  unsigned char mac[JWT_SIG_LEN];
-  if (hmac_sha256(mac, secret, secret_len, signing.p, signing.len) != 0)
-    return JWT_E_SIGNATURE;
-  return CRYPTO_memcmp(mac, sig, JWT_SIG_LEN) == 0 ? JWT_OK : JWT_E_SIGNATURE;
+    unsigned char mac[JWT_SIG_LEN];
+    if (hmac_sha256(mac, secret, secret_len, signing.p, signing.len) != 0)
+        return JWT_E_SIGNATURE;
+    return CRYPTO_memcmp(mac, sig, JWT_SIG_LEN) == 0 ? JWT_OK : JWT_E_SIGNATURE;
 }
 
 /*
@@ -635,46 +909,50 @@ static jwt_result_t check_signature(seg_t signing, seg_t sig_seg,
  * See the deviation note in jwt.h. typ is accepted and its value ignored, per
  * s5.1, which makes it advisory.
  */
-static jwt_result_t check_header(seg_t hdr) {
-  char json[JWT_MAX_LEN];
-  int len = b64url_decode((unsigned char *)json, sizeof json, hdr.p, hdr.len);
-  if (len < 0)
-    return JWT_E_MALFORMED;
+static jwt_result_t check_header(seg_t hdr)
+{
+    char json[JWT_MAX_LEN];
+    int len = b64url_decode((unsigned char *)json, sizeof json, hdr.p, hdr.len);
+    if (len < 0)
+        return JWT_E_MALFORMED;
 
-  json_iter_t it;
-  json_member_t m;
-  int alg_seen = 0, typ_seen = 0, rc;
+    json_iter_t it;
+    json_member_t m;
+    int alg_seen = 0, typ_seen = 0, rc;
 
-  json_iter_init(&it, json, (size_t)len);
-  while ((rc = json_next(&it, &m)) == 1) {
-    if (json_slice_is(m.key, m.key_len, "typ")) {
-      if (typ_seen++)
-        return JWT_E_ALG;
-      continue;
+    json_iter_init(&it, json, (size_t)len);
+    while ((rc = json_next(&it, &m)) == 1)
+    {
+        if (json_slice_is(m.key, m.key_len, "typ"))
+        {
+            if (typ_seen++)
+                return JWT_E_ALG;
+            continue;
+        }
+        if (!json_slice_is(m.key, m.key_len, "alg"))
+            return JWT_E_ALG;
+        if (alg_seen++)
+            return JWT_E_ALG;
+        if (m.kind != JSON_STRING || !json_slice_is(m.val, m.val_len, "HS256"))
+            return JWT_E_ALG;
     }
-    if (!json_slice_is(m.key, m.key_len, "alg"))
-      return JWT_E_ALG;
-    if (alg_seen++)
-      return JWT_E_ALG;
-    if (m.kind != JSON_STRING || !json_slice_is(m.val, m.val_len, "HS256"))
-      return JWT_E_ALG;
-  }
-  if (rc < 0)
-    return JWT_E_MALFORMED;
-  return alg_seen ? JWT_OK : JWT_E_ALG;
+    if (rc < 0)
+        return JWT_E_MALFORMED;
+    return alg_seen ? JWT_OK : JWT_E_ALG;
 }
 
 /* One required integer claim. Absent, duplicated, quoted, fractional or
  * out of range are all rejections. */
 static jwt_result_t claim_int(const char *json, size_t len, const char *key,
-                              long long *out) {
-  json_member_t m;
-  int rc = json_find(json, len, key, &m);
-  if (rc < 0)
-    return JWT_E_MALFORMED;
-  if (rc == 0 || m.kind != JSON_BARE || json_int(m.val, m.val_len, out) != 0)
-    return JWT_E_CLAIMS;
-  return JWT_OK;
+                              long long *out)
+{
+    json_member_t m;
+    int rc = json_find(json, len, key, &m);
+    if (rc < 0)
+        return JWT_E_MALFORMED;
+    if (rc == 0 || m.kind != JSON_BARE || json_int(m.val, m.val_len, out) != 0)
+        return JWT_E_CLAIMS;
+    return JWT_OK;
 }
 
 /*
@@ -688,74 +966,79 @@ static jwt_result_t claim_int(const char *json, size_t len, const char *key,
  * exp is required for the reason on the record: every JWT claim is OPTIONAL,
  * so a token with no exp otherwise reads as non-expiring.
  */
-static jwt_result_t read_claims(seg_t pay, jwt_claims_t *out) {
-  char json[JWT_MAX_LEN];
-  int len = b64url_decode((unsigned char *)json, sizeof json, pay.p, pay.len);
-  if (len < 0)
-    return JWT_E_MALFORMED;
+static jwt_result_t read_claims(seg_t pay, jwt_claims_t *out)
+{
+    char json[JWT_MAX_LEN];
+    int len = b64url_decode((unsigned char *)json, sizeof json, pay.p, pay.len);
+    if (len < 0)
+        return JWT_E_MALFORMED;
 
-  jwt_result_t rc;
-  if ((rc = claim_int(json, (size_t)len, "sub", &out->sub)) != JWT_OK)
-    return rc;
-  if ((rc = claim_int(json, (size_t)len, "iat", &out->iat)) != JWT_OK)
-    return rc;
-  if ((rc = claim_int(json, (size_t)len, "exp", &out->exp)) != JWT_OK)
-    return rc;
+    jwt_result_t rc;
+    if ((rc = claim_int(json, (size_t)len, "sub", &out->sub)) != JWT_OK)
+        return rc;
+    if ((rc = claim_int(json, (size_t)len, "iat", &out->iat)) != JWT_OK)
+        return rc;
+    if ((rc = claim_int(json, (size_t)len, "exp", &out->exp)) != JWT_OK)
+        return rc;
 
-  json_member_t m;
-  int found = json_find(json, (size_t)len, "name", &m);
-  if (found < 0)
-    return JWT_E_MALFORMED;
-  /* The slice is still escaped and nothing here unescapes it. '\' is not in
-   * #47's allowlist, so an escaped name is a rejection rather than a decode. */
-  if (found == 0 || m.kind != JSON_STRING || !name_ok(m.val, m.val_len))
-    return JWT_E_CLAIMS;
-  memcpy(out->name, m.val, m.val_len);
-  out->name[m.val_len] = '\0';
-  return JWT_OK;
+    json_member_t m;
+    int found = json_find(json, (size_t)len, "name", &m);
+    if (found < 0)
+        return JWT_E_MALFORMED;
+    /* The slice is still escaped and nothing here unescapes it. '\' is not in
+     * #47's allowlist, so an escaped name is a rejection rather than a decode.
+     */
+    if (found == 0 || m.kind != JSON_STRING || !name_ok(m.val, m.val_len))
+        return JWT_E_CLAIMS;
+    memcpy(out->name, m.val, m.val_len);
+    out->name[m.val_len] = '\0';
+    return JWT_OK;
 }
 
 /* The step order, and nothing else. Contract in jwt.h. */
 jwt_result_t jwt_verify(const char *token, const unsigned char *secret,
-                        size_t secret_len, time_t now, jwt_claims_t *out) {
-  if (out != NULL)
-    memset(out, 0, sizeof *out);
-  if (token == NULL || out == NULL)
-    return JWT_E_MALFORMED;
-  /* A caller error rather than a property of the token, reported as the most
-   * conservative rejection this enum has. */
-  if (!secret_ok(secret, secret_len))
-    return JWT_E_MALFORMED;
+                        size_t secret_len, time_t now, jwt_claims_t *out)
+{
+    if (out != NULL)
+        memset(out, 0, sizeof *out);
+    if (token == NULL || out == NULL)
+        return JWT_E_MALFORMED;
+    /* A caller error rather than a property of the token, reported as the most
+     * conservative rejection this enum has. */
+    if (!secret_ok(secret, secret_len))
+        return JWT_E_MALFORMED;
 
-  size_t len = strnlen(token, JWT_MAX_LEN);
-  if (len == JWT_MAX_LEN)
-    return JWT_E_MALFORMED; /* longer than anything this file mints */
+    size_t len = strnlen(token, JWT_MAX_LEN);
+    if (len == JWT_MAX_LEN)
+        return JWT_E_MALFORMED; /* longer than anything this file mints */
 
-  jwt_parts_t parts;
-  jwt_result_t rc = split_token(token, len, &parts);
-  if (rc != JWT_OK)
-    return rc;
+    jwt_parts_t parts;
+    jwt_result_t rc = split_token(token, len, &parts);
+    if (rc != JWT_OK)
+        return rc;
 
-  rc = check_signature(parts.signing, parts.sig, secret, secret_len);
-  if (rc != JWT_OK)
-    return rc;
+    rc = check_signature(parts.signing, parts.sig, secret, secret_len);
+    if (rc != JWT_OK)
+        return rc;
 
-  /* Past this point the bytes are trusted, and only past this point is any of
-   * them decoded. */
-  rc = check_header(parts.hdr);
-  if (rc != JWT_OK)
-    return rc;
+    /* Past this point the bytes are trusted, and only past this point is any of
+     * them decoded. */
+    rc = check_header(parts.hdr);
+    if (rc != JWT_OK)
+        return rc;
 
-  rc = read_claims(parts.pay, out);
-  if (rc != JWT_OK) {
-    memset(out, 0, sizeof *out);
-    return rc;
-  }
+    rc = read_claims(parts.pay, out);
+    if (rc != JWT_OK)
+    {
+        memset(out, 0, sizeof *out);
+        return rc;
+    }
 
-  /* Leeway is zero, and s4.1.4's wording is "on or after". */
-  if ((long long)now >= out->exp) {
-    memset(out, 0, sizeof *out);
-    return JWT_E_EXPIRED;
-  }
-  return JWT_OK;
+    /* Leeway is zero, and s4.1.4's wording is "on or after". */
+    if ((long long)now >= out->exp)
+    {
+        memset(out, 0, sizeof *out);
+        return JWT_E_EXPIRED;
+    }
+    return JWT_OK;
 }

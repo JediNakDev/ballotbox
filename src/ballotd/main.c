@@ -60,7 +60,7 @@ typedef struct {
   char cert_path[PATH_MAX];
   char key_path[PATH_MAX];
   char ctl_path[PATH_MAX];
-  char db_dir[PATH_MAX];  /* tdb_ensure_table() target; db_dir rc key */
+  char db_dir[PATH_MAX];  /* db_ensure_table() target; db_dir rc key */
   char db_sock[PATH_MAX]; /* SocketRunner unix socket; db_ipc rc key */
   int db_timeout_ms;      /* db_timeout rc key */
 } ballotd_opts_t;
@@ -89,31 +89,6 @@ static bb_ctx *g_ctx;
 /* config                                                              */
 /* ------------------------------------------------------------------ */
 
-static void rc_apply(const char *key, const char *value, void *ctxp) {
-  ballotd_opts_t *o = ctxp;
-  if (strcmp(key, "ballotd_port") == 0) {
-    char *end;
-    long n = strtol(value, &end, 10);
-    if (*end == '\0' && n > 0 && n < 65536)
-      o->port = (int)n;
-  } else if (strcmp(key, "ballotd_cert") == 0) {
-    snprintf(o->cert_path, sizeof o->cert_path, "%s", value);
-  } else if (strcmp(key, "ballotd_key") == 0) {
-    snprintf(o->key_path, sizeof o->key_path, "%s", value);
-  } else if (strcmp(key, "ballotd_ctl_ipc") == 0) {
-    snprintf(o->ctl_path, sizeof o->ctl_path, "%s", value);
-  } else if (strcmp(key, "db_dir") == 0) {
-    snprintf(o->db_dir, sizeof o->db_dir, "%s", value);
-  } else if (strcmp(key, "db_ipc") == 0) {
-    snprintf(o->db_sock, sizeof o->db_sock, "%s", value);
-  } else if (strcmp(key, "db_timeout") == 0) {
-    char *end;
-    long n = strtol(value, &end, 10);
-    if (*end == '\0' && n >= TDB_TIMEOUT_MIN_MS && n <= TDB_TIMEOUT_MAX_MS)
-      o->db_timeout_ms = (int)n;
-  }
-}
-
 static void usage(FILE *out, const char *argv0) {
   fprintf(out,
           "usage: %s [-p port] [-c cert] [-k key] [-C ctl_socket] [-d db_dir] "
@@ -127,7 +102,7 @@ static void usage(FILE *out, const char *argv0) {
           "  -i db_sock     SocketRunner unix socket (default %s)\n"
           "  -h             show this help\n",
           argv0, DEFAULT_PORT, DEFAULT_CERT, DEFAULT_KEY, CTL_SOCK_DEFAULT,
-          TDB_DEFAULT_DIR, TDB_DEFAULT_IPC);
+          DB_DEFAULT_DIR, DB_DEFAULT_IPC);
 }
 
 /* ------------------------------------------------------------------ */
@@ -434,13 +409,18 @@ int main(int argc, char **argv) {
   snprintf(opts.cert_path, sizeof opts.cert_path, "%s", DEFAULT_CERT);
   snprintf(opts.key_path, sizeof opts.key_path, "%s", DEFAULT_KEY);
   snprintf(opts.ctl_path, sizeof opts.ctl_path, "%s", CTL_SOCK_DEFAULT);
-  snprintf(opts.db_dir, sizeof opts.db_dir, "%s", TDB_DEFAULT_DIR);
-  snprintf(opts.db_sock, sizeof opts.db_sock, "%s", TDB_DEFAULT_IPC);
-  opts.db_timeout_ms = TDB_DEFAULT_TIMEOUT_MS;
+  snprintf(opts.db_dir, sizeof opts.db_dir, "%s", DB_DEFAULT_DIR);
+  snprintf(opts.db_sock, sizeof opts.db_sock, "%s", DB_DEFAULT_IPC);
+  opts.db_timeout_ms = DB_DEFAULT_TIMEOUT_MS;
 
-  if (rc_load(RC_PATH, rc_apply, &opts) < 0) {
-    /* missing rc file: defaults stand */
-  }
+  (void)rc_get_int("ballotd_port", DEFAULT_PORT, 1, 65535, &opts.port);
+  (void)rc_get("ballotd_cert", DEFAULT_CERT, opts.cert_path, sizeof opts.cert_path);
+  (void)rc_get("ballotd_key", DEFAULT_KEY, opts.key_path, sizeof opts.key_path);
+  (void)rc_get("ballotd_ctl_ipc", CTL_SOCK_DEFAULT, opts.ctl_path, sizeof opts.ctl_path);
+  (void)rc_get("db_dir", DB_DEFAULT_DIR, opts.db_dir, sizeof opts.db_dir);
+  (void)rc_get("db_ipc", DB_DEFAULT_IPC, opts.db_sock, sizeof opts.db_sock);
+  (void)rc_get_int("db_timeout", DB_DEFAULT_TIMEOUT_MS, DB_TIMEOUT_MIN_MS,
+                   DB_TIMEOUT_MAX_MS, &opts.db_timeout_ms);
 
   int opt;
   while ((opt = getopt(argc, argv, "p:c:k:C:d:i:h")) != -1) {
@@ -513,21 +493,21 @@ int main(int argc, char **argv) {
    * bin/tetrisdb ensuring TETRISAUTH_DB_TABLE in its own main() before
    * spawning the runner, this only takes effect if it runs before the
    * SocketRunner has started for this db_dir - the runner reads catalog.txt
-   * once at startup and never again (tdb_ensure_table's contract). It is
+   * once at startup and never again (db_ensure_table's contract). It is
    * therefore purely a filesystem operation here, independent of whether the
    * runner is currently reachable.
    */
-  if (tdb_ensure_table(opts.db_dir, BB_DB_TABLE_ELECTION,
+  if (db_ensure_table(opts.db_dir, BB_DB_TABLE_ELECTION,
                        BB_DB_SCHEMA_ELECTION) != 0 ||
-      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_OPTION, BB_DB_SCHEMA_OPTION) !=
+      db_ensure_table(opts.db_dir, BB_DB_TABLE_OPTION, BB_DB_SCHEMA_OPTION) !=
           0 ||
-      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_ELIGIBLE,
+      db_ensure_table(opts.db_dir, BB_DB_TABLE_ELIGIBLE,
                        BB_DB_SCHEMA_ELIGIBLE) != 0 ||
-      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_BALLOT, BB_DB_SCHEMA_BALLOT) !=
+      db_ensure_table(opts.db_dir, BB_DB_TABLE_BALLOT, BB_DB_SCHEMA_BALLOT) !=
           0 ||
-      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_OWNER, BB_DB_SCHEMA_OWNER) !=
+      db_ensure_table(opts.db_dir, BB_DB_TABLE_OWNER, BB_DB_SCHEMA_OWNER) !=
           0 ||
-      tdb_ensure_table(opts.db_dir, BB_DB_TABLE_NONCE, BB_DB_SCHEMA_NONCE) !=
+      db_ensure_table(opts.db_dir, BB_DB_TABLE_NONCE, BB_DB_SCHEMA_NONCE) !=
           0) {
     fprintf(stderr, "ballotd: failed to provision tables under '%s'\n",
             opts.db_dir);
@@ -540,8 +520,8 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  tdb_socket_opts_t db_opts;
-  tdb_socket_opts_default(&db_opts);
+  db_socket_opts_t db_opts;
+  db_socket_opts_load(&db_opts);
   snprintf(db_opts.sock, sizeof db_opts.sock, "%s", opts.db_sock);
   db_opts.timeout_ms = opts.db_timeout_ms;
   bb_set_db_opts(g_ctx, &db_opts);

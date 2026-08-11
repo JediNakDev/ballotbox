@@ -205,7 +205,7 @@ bb_result_t db_exec(bb_ctx *ctx, const bb_db_cmd_t *cmd, bb_db_result_t *out) {
  * Transaction control, faked as trivial always-succeed no-ops. Real
  * bb_record_ballot wraps its whole read-check-write sequence in
  * bb_db_begin()/bb_db_commit(), which - for real - open and close a
- * tdb_socket_t; a fake db_exec has nothing to reuse a connection across, so
+ * db_socket_t; a fake db_exec has nothing to reuse a connection across, so
  * these just let the sequence run as if there were no transaction at all,
  * exactly the old (pre-transaction) test behaviour. Faked here, not left to
  * link the real txn.c, for the same isolation reason db_exec is faked above:

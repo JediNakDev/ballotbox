@@ -175,7 +175,7 @@ static int test_basic_delivery(void)
     CHECK(log_send(LOG_ERROR, "board desync") == 0, "send ERROR");
     CHECK(log_send(LOG_DEBUG, "piece=%c", 'T') == 0, "send DEBUG");
     CHECK(wait_for_count("pid=", 5) >= 5, "records not written");
-    CHECK(log_dropped() == 0, "sender dropped records");
+    CHECK(get_log_dropped() == 0, "sender dropped records");
     log_close();
 
     CHECK(stop_logd(pid) == 0, "daemon exited non-zero");
@@ -307,7 +307,7 @@ static int test_sender_survives_restart(void)
     unlink(SOCK_PATH);
     log_open(SOCK_PATH);
     CHECK(log_send(LOG_INFO, "into the void") == -1, "send should have failed");
-    CHECK(log_dropped() >= 1, "drop not counted");
+    CHECK(get_log_dropped() >= 1, "drop not counted");
 
     pid_t pid = start_logd(NULL, NULL);
     CHECK(pid > 0, "daemon did not start");
@@ -345,7 +345,7 @@ static int test_burst_never_blocks(void)
     CHECK(kill(pid, SIGSTOP) == 0, "SIGSTOP failed");
     for (int i = 0; i < 20000; i++)
         log_send(LOG_DEBUG, "burst %d", i);
-    CHECK(log_dropped() > 0, "queue never filled, test is not exercising drops");
+    CHECK(get_log_dropped() > 0, "queue never filled, test is not exercising drops");
     CHECK(kill(pid, SIGCONT) == 0, "SIGCONT failed");
     /* Whatever the kernel accepted must still reach the file. */
     CHECK(wait_for_count("burst ", 1) >= 1, "queued records were lost");

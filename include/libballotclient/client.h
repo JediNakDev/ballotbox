@@ -94,14 +94,14 @@ void bcl_disconnect(bcl_ctx *ctx);
 
 /*
  * The pre-auth exchange, client side: send one LOGIN or REGISTER over the
- * session bcl_connect() already opened, wait for ballotd's tauth_login()
+ * session bcl_connect() already opened, wait for ballotd's auth_login()
  * (libtetrisauth, unmodified) to answer, and hand back the raw HTTTP status
  * - 200 success (a JWT rides in the body; nothing here reads it, same as
  * tetriSH's own client - see docs/libtetrisauth.md), 400 malformed, 401
  * wrong password, 404 no such user, 409 username taken (REGISTER only), 500
  * account service unreachable. Separate from bcl_send: LOGIN/REGISTER are
  * not bcl_op_t values (that enum is BallotBox's ballot protocol; this is
- * tetriSH's account protocol, riding the same wire), and tauth_login() owns
+ * tetriSH's account protocol, riding the same wire), and auth_login() owns
  * the exchange on the daemon side before any bcl_op_t request is even
  * legal - see ballotd/session.c's call site.
  *

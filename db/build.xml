@@ -49,7 +49,7 @@
                  whichever JDK ant happened to resolve, so a tree could build a
                  jar its own `java` cannot load - which surfaces as
                  UnsupportedClassVersionError from SocketRunner and is the trap
-                 include/libtetrisdb/runner.h names in tdb_runner_wait(). -->
+                 include/libtetrisdb/runner.h names in db_runner_wait(). -->
             <javac srcdir="@{srcdir}" destdir="@{destdir}" includeAntRuntime="no"
                     debug="${compile.debug}" source="${sourceversion}"
                     target="${sourceversion}">

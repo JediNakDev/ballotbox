@@ -23,10 +23,17 @@
  *
  * tetriSH method mapping (see htttp.md; args ride in path or body — the lib
  * only sees METHOD + PATH + headers + body):
- *   JOIN /room/<id>       id=0 -> new room          LEAVE /room
- *   START /room           MOVE /game/move   dir in body ("0"|"1")
- *   ROTATE /game/rotate   DROP /game/drop   HOLD /game/hold
- *   UPD_GAME /game/state  UPD_SESSION /session/state   (server -> client)
+ *   JOIN | LEAVE | START   /room/<id>              id=0 on JOIN -> new room
+ *   MOVE | ROTATE | DROP   /room/<id>/player/<pid>
+ *   HOLD                   /room/<id>/player/<pid> (ours, not in the handout)
+ *   HISTORY                /player/history         (ours, not in the handout)
+ *   STATE                  /room/<id>              (server -> client)
+ *   UPD_SESSION /session/state  UPD_RESULT /game/result   (server -> client)
+ *   UPD_HISTORY /player/history                          (server -> client)
+ *
+ * Command bodies are words, not digits: MOVE LEFT|RIGHT, ROTATE CW|CCW,
+ * DROP SOFT|HARD. Content-Type is application/tetris-command on a client
+ * request with a body, application/tetris-state on a server push.
  */
 
 #include <stdint.h>

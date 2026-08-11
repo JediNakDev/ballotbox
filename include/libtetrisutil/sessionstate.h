@@ -3,15 +3,16 @@
 
 #include <stdbool.h>
 
-#include "libtetrisutil/limits.h"   /* MAX_PLAYER_NAME, MAX_STANDINGS */
+#include "libtetrisutil/limits.h" /* MAX_PLAYER_NAME, MAX_STANDINGS */
 
 /* Where a client is in its lifecycle. */
-typedef enum {
-    SESSION_NONE = 0,      /* no session yet                       */
-    SESSION_IDLE,     /* handshake done, not in a room        */
-    SESSION_WAITING,       /* in a room, waiting for game start    */
-    SESSION_PLAYING,       /* game running                         */
-    SESSION_GAME_OVER,     /* topped out, still in the room        */
+typedef enum
+{
+    SESSION_NONE = 0,  /* no session yet                       */
+    SESSION_IDLE,      /* handshake done, not in a room        */
+    SESSION_WAITING,   /* in a room, waiting for game start    */
+    SESSION_PLAYING,   /* game running                         */
+    SESSION_GAME_OVER, /* topped out, still in the room        */
     SESSION_DISCONNECTED
 } SessionPhase;
 
@@ -29,17 +30,20 @@ typedef enum {
  * over its member table - see room_build_lists(). Building them separately is
  * how a name or an id would eventually differ between the lobby and the game.
  */
-typedef struct {
-    int  player_id;              /* stable identity; matches SessionState.player_id */
-    char name[MAX_PLAYER_NAME];  /* NUL-terminated; "Player N" until real names */
-    bool is_owner;               /* this row may START the round */
+typedef struct
+{
+    int player_id; /* stable identity; matches SessionState.player_id */
+    char
+        name[MAX_PLAYER_NAME]; /* NUL-terminated; "Player N" until real names */
+    bool is_owner;             /* this row may START the round */
 } RoomMember;
 
-typedef struct {
+typedef struct
+{
     SessionPhase phase;
-    int  room_id;          /* ROOM_NONE when not in a room */
-    int  player_id;        /* unique within the room       */
-    bool is_owner;         /* may start the game / kick    */
+    int room_id;   /* ROOM_NONE when not in a room */
+    int player_id; /* unique within the room       */
+    bool is_owner; /* may start the game / kick    */
 
     /*
      * Everyone currently in the room, in join order.
@@ -58,7 +62,7 @@ typedef struct {
      * the marker beside their name.
      */
     RoomMember roster[MAX_STANDINGS];
-    int        roster_count;
+    int roster_count;
 } SessionState;
 
 #endif

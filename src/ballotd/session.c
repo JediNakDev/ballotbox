@@ -24,7 +24,7 @@
 #include "ballotd/adminmsg.h"
 #include "libballotclient/codec.h"
 #include "libhtttp/htttp.h"
-#include "libtetrisauth/tetrisauth.h"
+#include "libtetrisauth/auth.h"
 #include "libtetrissh/tetrissh.h"
 #include "libtetrisutil/limits.h"
 
@@ -77,8 +77,8 @@ static bool is_voter_op(bcl_op_t op) {
  * encode, send. Strictly synchronous - one request in flight per
  * connection, so no poll() multiplexing is needed here.
  *
- * cert_name is this connection's tauth_login()-verified identity (session_main
- * gets it once via tauth_name(), after the pre-auth exchange resolves and
+ * cert_name is this connection's auth_login()-verified identity (session_main
+ * gets it once via auth_name(), after the pre-auth exchange resolves and
  * before this function is ever called). It overwrites whatever the request
  * itself carries, rather than merely filling a blank field: bcl_decode_request
  * still populates req->cert_name from the wire's Cert-Name header, but that
@@ -149,15 +149,15 @@ static void session_main(int client_fd, int admin_fd, const char *cert_path,
    * a real account; there is no guest path here; every BallotBox voter op
    * needs a cert_name it can check eligibility against, so "accepted as
    * anonymous" is not a state this daemon has any use for. Nothing below
-   * this line may run until it returns TAUTH_OK - that return is the proof
+   * this line may run until it returns AUTH_OK - that return is the proof
    * of authentication, not a flag anywhere on this connection. */
-  if (tauth_login(&sh) != TAUTH_OK) {
+  if (auth_login(&sh) != AUTH_OK) {
     session_close(&sh);
     return;
   }
 
   char cert_name[MAX_PLAYER_NAME];
-  tauth_name(cert_name, sizeof cert_name);
+  auth_name(cert_name, sizeof cert_name);
 
   uint8_t buf[SESSION_MAX_FRAME];
   while (true) {
