@@ -283,7 +283,7 @@ test-ci: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BI
 .PHONY: final-test
 final-test:
 	$(MAKE) clean
-	$(MAKE) test-ci
+	TETRISH_REQUIRE_RUNNER=1 $(MAKE) test
 	$(MAKE) $(BIN_DIR)/test_system_e2e
 	$(BIN_DIR)/test_system_e2e
 

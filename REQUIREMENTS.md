@@ -314,7 +314,8 @@ sequenceDiagram
 **Flow**
 
 1. Observer selects an election in ballotu, or Admin enters an election ID in ballotctl.
-2. ballotd fetches the election from SimpleDB and checks observer eligibility. The local admin path bypasses the eligible-voter check.
+2. ballotd fetches the election from SimpleDB and checks observer eligibility.
+   The local admin path bypasses the eligible-voter check.
 3. ballotd confirms the election is 'published' and returns the tally and the counted ballot hashes from SimpleDB.
 4. The selected client displays the tally and hash list, grouped by option.
 
@@ -383,7 +384,8 @@ sequenceDiagram
 1. Voter enters their secret ballot key in ballotu.
 2. ballotu derives the receipt hash from the key (hash function / KDF).
 3. ballotu sends the derived hash to ballotd to look up in the live ballot-hash set.
-4. ballotd searches the non-superseded hashes in SimpleDB. This lookup works before and after publication.
+4. ballotd searches the non-superseded hashes in SimpleDB.
+   This lookup works before and after publication.
 5. ballotu reports the voter's ballot was included and shows their recorded choice.
 
 **Alternative Flows**

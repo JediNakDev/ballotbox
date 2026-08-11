@@ -41,6 +41,10 @@ int auth_conf_load(void)
     if (g_frozen)
         return 0;
 
+    /* A session process owns one configuration snapshot. Reload here so a
+     * forked worker cannot inherit an rc.c snapshot taken by its launcher
+     * before the worker changed to its installation root. */
+    rc_reload();
     auth_conf_t scratch = g_conf;
 
     rc_get_int("auth_max_attempts", AUTH_DEFAULT_MAX_ATTEMPTS, 1, 100,

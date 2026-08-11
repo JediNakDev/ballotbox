@@ -1,4 +1,5 @@
 #include "libballotclient/voter.h"
+#include "internal.h"
 
 #include <string.h>
 
@@ -58,6 +59,12 @@ bu_check_outcome_t bu_classify_check(bb_result_t status, int found) {
 }
 
 /* ---- session flows ----------------------------------------------------- */
+
+void bu_set_before_submit(bcl_ctx *ctx, bu_before_submit_fn hook, void *arg) {
+  if (ctx == NULL) return;
+  ctx->before_submit = hook;
+  ctx->before_submit_arg = arg;
+}
 
 bu_join_outcome_t bu_join(bcl_ctx *ctx, bu_session_t *session, const char *election_id,
                           const char *cert_name) {
@@ -141,6 +148,10 @@ bb_result_t bu_submit_vote(bcl_ctx *ctx, bu_session_t *session, int option_index
     return er;
   }
   snprintf(req.ballot.cert_name, BB_CERT_LEN, "%s", session->cert_name);
+
+  if (ctx != NULL && ctx->before_submit != NULL) {
+    ctx->before_submit(ctx->before_submit_arg);
+  }
 
   bcl_response_t resp;
   memset(&resp, 0, sizeof(resp));

@@ -27,6 +27,13 @@ typedef struct {
   int option_count;
 } bu_session_t;
 
+/* Optional instance-scoped synchronization point invoked after ballot
+ * encryption and immediately before the request is sent. Production clients
+ * leave it unset. System tests use it to put an election close precisely in
+ * the client-encrypted/server-not-yet-recorded window. */
+typedef void (*bu_before_submit_fn)(void *arg);
+void bu_set_before_submit(bcl_ctx *ctx, bu_before_submit_fn hook, void *arg);
+
 /* Which flow the `vote` command should take (decision table, client-side rules
  * 1/3/5). The election-open check is the daemon's job and is not decided here. */
 typedef enum {

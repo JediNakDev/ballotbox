@@ -96,7 +96,10 @@ static db_socket_t *conn_open(void)
  * not survive, and macOS does not implement that one either. */
 static sem_t *reg_acquire(void)
 {
-    sem_t *sem = sem_open(REG_SEM_NAME, O_CREAT, 0600, 1);
+    const char *configured = getenv("TETRISH_REG_SEM");
+    const char *name = configured != NULL && configured[0] == '/' ? configured
+                                                                  : REG_SEM_NAME;
+    sem_t *sem = sem_open(name, O_CREAT, 0600, 1);
     if (sem == SEM_FAILED)
     {
         log_send(LOG_DEBUG, "auth: sem_open(" REG_SEM_NAME ") failed: %s",
