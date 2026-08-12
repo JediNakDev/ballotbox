@@ -44,7 +44,10 @@ auth_verdict_t auth_budget_reply(auth_budget_t *b, int status)
     return AUTH_VERDICT_COUNTED;
 }
 
-int auth_budget_failures(const auth_budget_t *b) { return b->failures; }
+int auth_budget_failures(const auth_budget_t *b)
+{
+    return b->failures;
+}
 
 bool auth_budget_exhausted(const auth_budget_t *b, int cap)
 {

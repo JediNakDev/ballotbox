@@ -5,8 +5,8 @@
  *
  *   A. No socket, no server   #58's jwt_secret fixtures, which are pure
  *                             return-value checks against
- *                             tauth_secret_load()/tauth_secret_provision().
- *   B. Socketpair, scripted peer   tauth_login() and tauth_offer(): the
+ *                             auth_secret_load()/auth_secret_provision().
+ *   B. Socketpair, scripted peer   auth_login() and auth_offer(): the
  *                             control flow, the status mapping, both
  *                             degradations, and the scrub.
  *   C. Live SocketRunner   the queries themselves, skipped without a JVM.
@@ -17,7 +17,7 @@
  *     config load freezes on first success, so a case that wants a different
  *     auth_max_attempts or a fresh counter gets one by being a child process.
  *     That is the design being tested honestly: one process, one client. There
- *     is deliberately no tauth_reset_for_test().
+ *     is deliberately no auth_reset_for_test().
  *   - NO CASE ASSERTS ON ELAPSED WALL-CLOCK TIME, including the two that exist
  *     to pin deadlines. Both assert a 500 under an alarm() watchdog, which
  *     distinguishes "returned with the right answer" from "hung" with no
@@ -35,13 +35,13 @@
  * absent.
  *
  * WHERE #54's SECTION LINE MOVED, AND WHY. #55's resolution expected
- * tauth_offer() to be reachable "with no socket and no server", because it
+ * auth_offer() to be reachable "with no socket and no server", because it
  * takes a parsed request and a SessionState. That is still false, for a
  * smaller reason than it used to be: it answers 409 on the wire itself, so it
- * needs the session tauth_login() retained. Every tauth_offer() case is
+ * needs the session auth_login() retained. Every auth_offer() case is
  * therefore in section B, and the pure rules underneath it - the body split,
  * the username allowlist, the password bounds - are asserted through the wire
- * rather than by reaching into src/libtetrisauth/tauth_priv.h, which is
+ * rather than by reaching into src/libtetrisauth/auth_priv.h, which is
  * private for the same reason jwt.c's base64url and JSON statics are.
  *
  * ONE CASE ASSERTS A DELETED MECHANISM BY ITS ABSENCE. #48 decision 3 was
@@ -60,7 +60,7 @@
  * on disk rather than an rc value holds no static and needs none of the
  * process-isolation the rest of this suite pays for. #56 means a 500 never
  * moves the attempt counter, so these are pure return-value checks against
- * tauth_secret_load()/tauth_secret_provision() directly.
+ * auth_secret_load()/auth_secret_provision() directly.
  *
  * Run from the repo root: make test */
 #include <errno.h>
@@ -80,7 +80,7 @@
 #include "libhtttp/htttp.h"
 #include "libtetrisauth/jwt.h"
 #include "libtetrisauth/provision.h"
-#include "libtetrisauth/tetrisauth.h"
+#include "libtetrisauth/auth.h"
 #include "libtetrisdb/schema.h"
 #include "libtetrisdb/socket/db.h"
 #include "libtetrisdb/socket/runner.h"
@@ -90,7 +90,7 @@
 #define TEST_SECRET_PATH TEST_ROOT "/auth/jwt_secret"
 
 /* Section B and C build an isolated working directory. Each child chdirs into
- * it before tauth_login(), so relative auth paths cannot touch the developer's
+ * it before auth_login(), so relative auth paths cannot touch the developer's
  * real .tetrishrc or auth/jwt_secret. */
 #define WIRE_ROOT "var/auth_wire"
 #define WIRE_RC WIRE_ROOT "/.tetrishrc"
@@ -168,7 +168,7 @@ static int test_absent_is_500(void) {
   make_dir();
 
   unsigned char out[64];
-  int rc = tauth_secret_load(TEST_ROOT, out, sizeof out);
+  int rc = auth_secret_load(TEST_ROOT, out, sizeof out);
   CHECK(rc == -1, "absent secret must be refused, not created");
 
   reset_root();
@@ -181,7 +181,7 @@ static int test_loose_mode_is_500(void) {
   CHECK(write_secret(32, 0644) == 0, "fixture: write a 0644 secret");
 
   unsigned char out[64];
-  int rc = tauth_secret_load(TEST_ROOT, out, sizeof out);
+  int rc = auth_secret_load(TEST_ROOT, out, sizeof out);
   CHECK(rc == -1, "group/other-readable secret must be refused");
 
   reset_root();
@@ -194,7 +194,7 @@ static int test_short_secret_is_500(void) {
   CHECK(write_secret(31, 0600) == 0, "fixture: write a 31-byte secret");
 
   unsigned char out[64];
-  int rc = tauth_secret_load(TEST_ROOT, out, sizeof out);
+  int rc = auth_secret_load(TEST_ROOT, out, sizeof out);
   CHECK(rc == -1, "a 31-byte secret is below RFC 7518's floor and must be refused");
 
   reset_root();
@@ -207,7 +207,7 @@ static int test_oversized_secret_is_500(void) {
   CHECK(write_secret(65, 0600) == 0, "fixture: write a 65-byte secret");
 
   unsigned char out[128];
-  int rc = tauth_secret_load(TEST_ROOT, out, sizeof out);
+  int rc = auth_secret_load(TEST_ROOT, out, sizeof out);
   CHECK(rc == -1, "a 65-byte secret is above the HMAC block size and must be refused");
 
   reset_root();
@@ -232,7 +232,7 @@ static int test_fifo_is_refused_not_read(void) {
 
   unsigned char out[64];
   alarm(WATCHDOG_SECS);
-  int rc = tauth_secret_load(TEST_ROOT, out, sizeof out);
+  int rc = auth_secret_load(TEST_ROOT, out, sizeof out);
   alarm(0);
   CHECK(rc == -1, "a FIFO must be refused on S_ISREG, not opened and read");
 
@@ -246,7 +246,7 @@ static int test_valid_secret_loads(void) {
   CHECK(write_secret(32, 0600) == 0, "fixture: write a 32-byte secret");
 
   unsigned char out[64];
-  int rc = tauth_secret_load(TEST_ROOT, out, sizeof out);
+  int rc = auth_secret_load(TEST_ROOT, out, sizeof out);
   CHECK(rc == 32, "a 32-byte, 0600 secret must load and return its length");
 
   reset_root();
@@ -261,12 +261,12 @@ static int test_chmod_recovers_without_restart(void) {
   CHECK(write_secret(32, 0644) == 0, "fixture: write a 0644 secret");
 
   unsigned char out[64];
-  int rc = tauth_secret_load(TEST_ROOT, out, sizeof out);
+  int rc = auth_secret_load(TEST_ROOT, out, sizeof out);
   CHECK(rc == -1, "first attempt against a loose file must be refused");
 
   CHECK(chmod(TEST_SECRET_PATH, 0600) == 0, "chmod 0600 must succeed");
 
-  rc = tauth_secret_load(TEST_ROOT, out, sizeof out);
+  rc = auth_secret_load(TEST_ROOT, out, sizeof out);
   CHECK(rc == 32, "the same process, same file, must recover with no restart");
 
   reset_root();
@@ -280,7 +280,7 @@ static int test_provision_creates_usable_secret(void) {
   make_dir();
 
   char err[128];
-  int rc = tauth_secret_provision(TEST_ROOT, err, sizeof err);
+  int rc = auth_secret_provision(TEST_ROOT, err, sizeof err);
   CHECK(rc == 0, "provisioning an absent secret must succeed");
 
   struct stat st;
@@ -289,7 +289,7 @@ static int test_provision_creates_usable_secret(void) {
   CHECK(st.st_size == 32, "a freshly created secret must be exactly 32 bytes");
 
   unsigned char out[64];
-  CHECK(tauth_secret_load(TEST_ROOT, out, sizeof out) == 32,
+  CHECK(auth_secret_load(TEST_ROOT, out, sizeof out) == 32,
         "a freshly provisioned secret must load cleanly");
 
   reset_root();
@@ -302,17 +302,17 @@ static int test_provision_is_idempotent(void) {
   make_dir();
 
   char err[128];
-  CHECK(tauth_secret_provision(TEST_ROOT, err, sizeof err) == 0,
+  CHECK(auth_secret_provision(TEST_ROOT, err, sizeof err) == 0,
         "first provision must succeed");
 
   unsigned char first[64];
-  CHECK(tauth_secret_load(TEST_ROOT, first, sizeof first) == 32, "first load must succeed");
+  CHECK(auth_secret_load(TEST_ROOT, first, sizeof first) == 32, "first load must succeed");
 
-  CHECK(tauth_secret_provision(TEST_ROOT, err, sizeof err) == 0,
+  CHECK(auth_secret_provision(TEST_ROOT, err, sizeof err) == 0,
         "second provision against an existing usable key must succeed");
 
   unsigned char second[64];
-  CHECK(tauth_secret_load(TEST_ROOT, second, sizeof second) == 32, "second load must succeed");
+  CHECK(auth_secret_load(TEST_ROOT, second, sizeof second) == 32, "second load must succeed");
   CHECK(memcmp(first, second, 32) == 0,
         "provisioning twice must not rotate an existing key");
 
@@ -328,7 +328,7 @@ static int test_provision_never_repairs(void) {
   CHECK(write_secret(32, 0644) == 0, "fixture: write a 0644 secret");
 
   char err[128];
-  int rc = tauth_secret_provision(TEST_ROOT, err, sizeof err);
+  int rc = auth_secret_provision(TEST_ROOT, err, sizeof err);
   CHECK(rc == -1, "provisioning over a loose existing secret must refuse, not repair");
 
   struct stat st;
@@ -385,7 +385,7 @@ static void wire_reset(void) {
 }
 
 /* Build an isolated working directory with a 32-byte 0600 secret and the
- * relative paths each child uses. The child chdirs here before tauth_login(),
+ * relative paths each child uses. The child chdirs here before auth_login(),
  * so no case can touch the repo's own .tetrishrc or auth/jwt_secret. */
 static int wire_setup(void) {
   unsigned char secret[32];
@@ -506,11 +506,11 @@ static int drive(const wire_case_t *w) {
 
 /* The child every case with nothing to check after the exchange uses. */
 static int child_expect_ok(session_t *sh) {
-  return tauth_login(sh) == TAUTH_OK ? 0 : 1;
+  return auth_login(sh) == AUTH_OK ? 0 : 1;
 }
 
 static int child_expect_drop(session_t *sh) {
-  return tauth_login(sh) == TAUTH_DROP ? 0 : 1;
+  return auth_login(sh) == AUTH_DROP ? 0 : 1;
 }
 
 /* --- B cases --- */
@@ -531,12 +531,12 @@ static const char RC_NO_DB[] = "db_ipc = run/nothing-here.sock\n"
 static int child_guest_is_nameless(session_t *sh) {
   char name[MAX_PLAYER_NAME];
 
-  if (tauth_login(sh) != TAUTH_OK)
+  if (auth_login(sh) != AUTH_OK)
     return 1;
 
   /* Before any login at all, and after an accepted GUEST, the stamp is empty -
    * which is what makes room.c fall back to "Player %d". */
-  tauth_name(name, sizeof name);
+  auth_name(name, sizeof name);
   return name[0] == '\0' ? 0 : 2;
 }
 
@@ -747,7 +747,7 @@ static int test_missing_rc_splits_guest_from_login(void) {
   return drive(&w);
 }
 
-/* --- tauth_offer(), which needs the session tauth_login() retained --- */
+/* --- auth_offer(), which needs the session auth_login() retained --- */
 
 /* Build a parsed request the way session.c's POLLIN arm does: serialize into a
  * buffer and parse it back, so req->body points into buf exactly as his does
@@ -797,7 +797,7 @@ static int child_offer(session_t *sh) {
   htttp_request_t req;
   SessionState idle, in_room, playing;
 
-  if (tauth_login(sh) != TAUTH_OK)
+  if (auth_login(sh) != AUTH_OK)
     return 1;
 
   memset(&idle, 0, sizeof idle);
@@ -813,18 +813,18 @@ static int child_offer(session_t *sh) {
    * dispatch switch below it carries on untouched. */
   if (build_request(buf, sizeof buf, &req, "JOIN", "/room/0", NULL) != 0)
     return 2;
-  if (tauth_offer(&req, &idle))
+  if (auth_offer(&req, &idle))
     return 3;
 
   if (build_request(buf, sizeof buf, &req, "GUEST", "/auth/guest", NULL) != 0)
     return 4;
-  if (!tauth_offer(&req, &idle))
+  if (!auth_offer(&req, &idle))
     return 5;
 
   if (build_request(buf, sizeof buf, &req, "REGISTER", "/auth/register",
                     "bob\npassphrase") != 0)
     return 6;
-  if (!tauth_offer(&req, &in_room))
+  if (!auth_offer(&req, &in_room))
     return 7;
 
   /* Idle is the state the superseded design ran the exchange in, so it is the
@@ -833,7 +833,7 @@ static int child_offer(session_t *sh) {
   if (build_request(buf, sizeof buf, &req, "LOGIN", "/auth/login",
                     "bob\nhunter2hunter2") != 0)
     return 8;
-  if (!tauth_offer(&req, &idle))
+  if (!auth_offer(&req, &idle))
     return 9;
 
   /* THE PLAINTEXT IS GONE BY THE TIME CONTROL COMES BACK. Refusing the request
@@ -848,7 +848,7 @@ static int child_offer(session_t *sh) {
   if (build_request(buf, sizeof buf, &req, "LOGIN", "/auth/login",
                     "bob\npassword") != 0)
     return 11;
-  if (!tauth_offer(&req, &idle))
+  if (!auth_offer(&req, &idle))
     return 12;
 
   return 0;
@@ -941,9 +941,9 @@ static void stop_runner(void) {
  * file.
  */
 static int start_runner(void) {
-  tdb_runner_opts_t opts;
+  db_runner_opts_t opts;
 
-  CHECK(tdb_ensure_table(WIRE_DB, TETRISAUTH_DB_TABLE, TETRISAUTH_DB_SCHEMA) ==
+  CHECK(db_ensure_table(WIRE_DB, TETRISAUTH_DB_TABLE, TETRISAUTH_DB_SCHEMA) ==
             0,
         "fixture: create the user table");
 
@@ -954,16 +954,18 @@ static int start_runner(void) {
    * cases wait out REG_WAIT_MS and fail. */
   (void)sem_unlink("/tetrish_register");
 
-  tdb_runner_opts_default(&opts);
+  memset(&opts, 0, sizeof opts);
   snprintf(opts.dir, sizeof opts.dir, "%s", WIRE_DB);
   snprintf(opts.jar, sizeof opts.jar, "%s", TEST_JAR);
+  snprintf(opts.java, sizeof opts.java, "%s", DB_DEFAULT_JAVA);
+  snprintf(opts.err_path, sizeof opts.err_path, "%s", DB_DEFAULT_ERR_PATH);
   snprintf(opts.ipc, sizeof opts.ipc, "%s", WIRE_SOCK);
   opts.sessions = 8;
   opts.recover = 0;
 
-  g_runner = tdb_runner_spawn(&opts, -1);
+  g_runner = db_runner_spawn(&opts, -1);
   CHECK(g_runner > 0, "fixture: spawn a runner");
-  CHECK(tdb_runner_wait(WIRE_SOCK, g_runner, 20000) == 0,
+  CHECK(db_runner_wait(WIRE_SOCK, g_runner, 20000) == 0,
         "fixture: the runner never accepted a connection");
   return 0;
 }
@@ -971,19 +973,19 @@ static int start_runner(void) {
 /* One statement on a connection of this process's own, for the fixtures and
  * the assertions that read the table directly. */
 static int query(const char *sql, char *body, size_t cap) {
-  tdb_socket_opts_t opts;
+  db_socket_opts_t opts;
 
-  tdb_socket_opts_default(&opts);
+  db_socket_opts_load(&opts);
   snprintf(opts.sock, sizeof opts.sock, "%s", WIRE_SOCK);
   opts.timeout_ms = 8000;
 
-  tdb_socket_t *conn = tdb_socket_open(&opts);
+  db_socket_t *conn = db_socket_open(&opts);
   if (conn == NULL)
     return -1;
 
-  tdb_status_t st = tdb_socket_exec(conn, sql, body, cap);
-  tdb_socket_close(conn);
-  return st == TDB_OK ? 0 : -1;
+  db_status_t st = db_socket_exec(conn, sql, body, cap);
+  db_socket_close(conn);
+  return st == DB_OK ? 0 : -1;
 }
 
 /* How many rows carry this name. -1 if the answer is not a table. */
@@ -995,15 +997,15 @@ static int rows_named(const char *name) {
            "select id from " TETRISAUTH_DB_TABLE " where name = '%s';", name);
   if (query(sql, body, sizeof body) != 0)
     return -1;
-  return tdb_row_count(body);
+  return db_row_count(body);
 }
 
 static int child_name_is(session_t *sh, const char *want) {
   char name[MAX_PLAYER_NAME];
 
-  if (tauth_login(sh) != TAUTH_OK)
+  if (auth_login(sh) != AUTH_OK)
     return 1;
-  tauth_name(name, sizeof name);
+  auth_name(name, sizeof name);
   return strcmp(name, want) == 0 ? 0 : 2;
 }
 
@@ -1023,7 +1025,7 @@ static int peer_register_alice(session_t *cli) {
         "send REGISTER");
   CHECK(get(cli, token, sizeof token) == 200, "REGISTER must be 200");
 
-  int len = tauth_secret_load(WIRE_ROOT, secret, sizeof secret);
+  int len = auth_secret_load(WIRE_ROOT, secret, sizeof secret);
   CHECK(len > 0, "the fixture secret must load");
   CHECK(jwt_verify(token, secret, (size_t)len, time(NULL), &claims) == JWT_OK,
         "the 200 body must be a token this secret verifies");
@@ -1232,7 +1234,7 @@ static int race_once(const char *name) {
         _exit(250);
       alarm(WATCHDOG_SECS);
       fake_session(&sh, sv[i][1]);
-      _exit(tauth_login(&sh) == TAUTH_OK ? 0 : 1);
+      _exit(auth_login(&sh) == AUTH_OK ? 0 : 1);
     }
     close(sv[i][1]);
     fake_session(&cli[i], sv[i][0]);

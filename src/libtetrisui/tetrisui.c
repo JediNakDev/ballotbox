@@ -88,11 +88,12 @@ static WINDOW *frame_win(const char *title, int height, int width, int starty,
 }
 
 int tetrisui_menu(const char *title, const char *items[], int count,
-             const char *hint)
+                  const char *hint)
 {
     /* count == 0 would make the wrap-around arithmetic below compute
-     * (sel - 1 + 0) % 0 -> SIGFPE. count > TETRISUI_MAX_ITEMS means the caller's
-     * array is smaller than it claims, so refuse rather than read past it. */
+     * (sel - 1 + 0) % 0 -> SIGFPE. count > TETRISUI_MAX_ITEMS means the
+     * caller's array is smaller than it claims, so refuse rather than read past
+     * it. */
     if (count <= 0 || count > TETRISUI_MAX_ITEMS)
         return -1;
 
@@ -119,7 +120,8 @@ int tetrisui_menu(const char *title, const char *items[], int count,
             if (i == sel)
                 wattroff(win, A_REVERSE);
         }
-        tetrisui_draw_status_bar(hint ? hint : "Up/Down move  Enter select  q back");
+        tetrisui_draw_status_bar(hint ? hint
+                                      : "Up/Down move  Enter select  q back");
         wrefresh(win);
         refresh();
         ch = wgetch(win);
@@ -135,7 +137,8 @@ int tetrisui_menu(const char *title, const char *items[], int count,
     return sel;
 }
 
-int tetrisui_input(const char *title, const char *prompt, char *out, int out_len)
+int tetrisui_input(const char *title, const char *prompt, char *out,
+                   int out_len)
 {
     int rows, cols;
     getmaxyx(stdscr, rows, cols);
@@ -196,7 +199,7 @@ int tetrisui_input(const char *title, const char *prompt, char *out, int out_len
 }
 
 int tetrisui_form(const char *title, const char *labels[],
-             char values[][TETRISUI_FIELD_LEN], int count)
+                  char values[][TETRISUI_FIELD_LEN], int count)
 {
     return tetrisui_form_ex(title, labels, values, count, 0, NULL, 0);
 }
@@ -204,8 +207,8 @@ int tetrisui_form(const char *title, const char *labels[],
 /* Draw values[i] as '*' repeated for its length when mask bit i is set. Same
  * width and padding as the unmasked print, so the field box never resizes
  * when the mask flips. */
-static void draw_field_value(WINDOW *win, int y, int width,
-                             const char *value, int masked)
+static void draw_field_value(WINDOW *win, int y, int width, const char *value,
+                             int masked)
 {
     if (!masked)
     {
@@ -222,8 +225,8 @@ static void draw_field_value(WINDOW *win, int y, int width,
 }
 
 int tetrisui_form_ex(const char *title, const char *labels[],
-             char values[][TETRISUI_FIELD_LEN], int count,
-             unsigned mask, const char *error, int start_field)
+                     char values[][TETRISUI_FIELD_LEN], int count,
+                     unsigned mask, const char *error, int start_field)
 {
     if (count <= 0 || count > TETRISUI_MAX_FIELDS)
         return -1; /* see tetrisui_menu */
@@ -268,7 +271,8 @@ int tetrisui_form_ex(const char *title, const char *labels[],
             mvwprintw(win, count * 2 + 2, 2, "%.*s", width - 4, error);
             wattroff(win, A_BOLD);
         }
-        tetrisui_draw_status_bar("Tab/Down next field  Enter submit  Esc cancel");
+        tetrisui_draw_status_bar(
+            "Tab/Down next field  Enter submit  Esc cancel");
         wmove(win, field * 2 + 3, 2 + (int)strlen(values[field]));
         wrefresh(win);
         refresh();
@@ -446,10 +450,11 @@ void tetrisui_progress(const char *title, const char *steps[], int step_count)
 
 /* --- Real progress -------------------------------------------------------
  *
- * tetrisui_progress above is scripted: it prints OK for every step no matter what
- * happened. That is fine for a mock, and wrong for anything that can fail. The
- * tetrissh handshake can fail (SESSION_ERR_AUTH on a forged or expired cert),
- * so tetrisu drives this version instead and reports what actually occurred.
+ * tetrisui_progress above is scripted: it prints OK for every step no matter
+ * what happened. That is fine for a mock, and wrong for anything that can fail.
+ * The tetrissh handshake can fail (SESSION_ERR_AUTH on a forged or expired
+ * cert), so tetrisu drives this version instead and reports what actually
+ * occurred.
  *
  * The panel is kept in statics rather than returned as a handle: only one
  * progress panel is ever on screen, and threading a handle through the connect
@@ -460,7 +465,8 @@ static WINDOW *g_prog_win;
 static const char **g_prog_steps;
 static int g_prog_count;
 
-void tetrisui_progress_begin(const char *title, const char *steps[], int step_count)
+void tetrisui_progress_begin(const char *title, const char *steps[],
+                             int step_count)
 {
     if (step_count <= 0)
         return;

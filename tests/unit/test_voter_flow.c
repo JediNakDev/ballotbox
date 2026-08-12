@@ -220,6 +220,25 @@ void test_encrypt_failure_sends_nothing(void) {
   TEST_ASSERT_EQUAL_INT(0, session.has_ballot);
 }
 
+static int barrier_calls;
+
+static void observe_encrypted_before_send(void *arg) {
+  int *observed = arg;
+  barrier_calls++;
+  *observed = fake_client.encrypt_calls == 1 && fake_client.send_count == 0;
+}
+
+void test_submission_barrier_runs_after_encryption_before_transport(void) {
+  joined_session();
+  int observed = 0;
+  bu_set_before_submit(ctx, observe_encrypted_before_send, &observed);
+
+  TEST_ASSERT_EQUAL_INT(BB_OK, bu_submit_vote(ctx, &session, 1, "nonce-race", NULL));
+  TEST_ASSERT_EQUAL_INT(1, barrier_calls);
+  TEST_ASSERT_TRUE(observed);
+  TEST_ASSERT_EQUAL_INT(1, fake_client.send_count);
+}
+
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_U35_join_timeout_creates_no_session);
@@ -233,5 +252,6 @@ int main(void) {
   RUN_TEST(test_U39_update_flow_advances_version);
   RUN_TEST(test_refused_submission_does_not_move_the_session);
   RUN_TEST(test_encrypt_failure_sends_nothing);
+  RUN_TEST(test_submission_barrier_runs_after_encryption_before_transport);
   return UNITY_END();
 }

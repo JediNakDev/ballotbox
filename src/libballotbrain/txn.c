@@ -10,10 +10,10 @@
  * no-ops), and the two fakes must be independently substitutable.
  */
 
-static bb_result_t map_status(tdb_status_t st) {
+static bb_result_t map_status(db_status_t st) {
   switch (st) {
-    case TDB_OK: return BB_OK;
-    case TDB_RETRY: return BB_ERR_RETRY;
+    case DB_OK: return BB_OK;
+    case DB_RETRY: return BB_ERR_RETRY;
     default: return BB_ERR_DB;
   }
 }
@@ -22,14 +22,14 @@ bb_result_t bb_db_begin(bb_ctx *ctx) {
   if (ctx == NULL || ctx->txn_conn != NULL) {
     return BB_ERR_DB;
   }
-  tdb_socket_opts_t opts = bb_effective_db_opts(ctx);
-  tdb_socket_t *conn = tdb_socket_open(&opts);
+  db_socket_opts_t opts = bb_effective_db_opts(ctx);
+  db_socket_t *conn = db_socket_open(&opts);
   if (conn == NULL) {
     return BB_ERR_DB;
   }
-  bb_result_t r = map_status(tdb_socket_exec(conn, "set transaction read write;", NULL, 0));
+  bb_result_t r = map_status(db_socket_exec(conn, "set transaction read write;", NULL, 0));
   if (r != BB_OK) {
-    tdb_socket_close(conn);
+    db_socket_close(conn);
     return r;
   }
   ctx->txn_conn = conn;
@@ -40,8 +40,8 @@ bb_result_t bb_db_commit(bb_ctx *ctx) {
   if (ctx == NULL || ctx->txn_conn == NULL) {
     return BB_ERR_DB;
   }
-  bb_result_t r = map_status(tdb_socket_exec(ctx->txn_conn, "commit;", NULL, 0));
-  tdb_socket_close(ctx->txn_conn);
+  bb_result_t r = map_status(db_socket_exec(ctx->txn_conn, "commit;", NULL, 0));
+  db_socket_close(ctx->txn_conn);
   ctx->txn_conn = NULL;
   return r;
 }
@@ -52,7 +52,7 @@ void bb_db_rollback(bb_ctx *ctx) {
   }
   /* Intent, not a requirement: closing rolls back anything left open
    * regardless (db/docs/c-daemon-integration.md section 4, "Shutdown"). */
-  (void)tdb_socket_exec(ctx->txn_conn, "rollback;", NULL, 0);
-  tdb_socket_close(ctx->txn_conn);
+  (void)db_socket_exec(ctx->txn_conn, "rollback;", NULL, 0);
+  db_socket_close(ctx->txn_conn);
   ctx->txn_conn = NULL;
 }

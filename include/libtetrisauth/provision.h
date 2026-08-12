@@ -14,12 +14,12 @@
  *
  * THE SCHEMA TEXT LIVES HERE, BESIDE ITS ONLY PARSER
  *
- * tetrisdb start calls tdb_ensure_table(db_dir, TETRISAUTH_DB_TABLE,
+ * tetrisdb start calls db_ensure_table(db_dir, TETRISAUTH_DB_TABLE,
  * TETRISAUTH_DB_SCHEMA) before it spawns the JVM, because SimpleDB reads
  * catalog.txt once at runner startup and never again.
  *
  * The launcher is the caller, so the literal ought by ownership to live there.
- * It does not, for one reason: tdb_row_fields() hands out fields
+ * It does not, for one reason: db_row_fields() hands out fields
  * POSITIONALLY. If the schema text lived in the launcher and the field indices
  * lived in libtetrisauth, a column reordered in one file would read a salt as
  * a digest with no error anywhere. Co-locating the definition with its only
@@ -80,7 +80,7 @@
  * and an operator standing at a terminal reading a non-zero exit code. The
  * mkstemp / fchmod / fsync / link dance still happens - the hazard is not
  * deleted, it is moved to the only place where it is cheap and where failing
- * is loud. This is the same move #52 made by putting tdb_ensure_table() and
+ * is loud. This is the same move #52 made by putting db_ensure_table() and
  * the exec eleven lines apart in one process: correct by construction rather
  * than by convention.
  *
@@ -92,9 +92,10 @@
 #include <stddef.h>
 
 /* The catalog line tetrisdb start creates before spawning the JVM. */
-#define TETRISAUTH_DB_TABLE  "user"
-#define TETRISAUTH_DB_SCHEMA \
-    "id int, name string, salt string, digest string, iters int, created_at int"
+#define TETRISAUTH_DB_TABLE "user"
+#define TETRISAUTH_DB_SCHEMA                                                   \
+    "id int, name string, salt string, digest string, iters int, created_at "  \
+    "int"
 
 /*
  * Create <root>/auth/jwt_secret if absent, validate it if present. Returns 0
@@ -102,7 +103,7 @@
  * reason written into err.
  *
  * PROVISIONING ONLY - never called from a session. tetrisdb start calls it as
- * step 4b, inside the flock, between tdb_ensure_table() and the socket unlink,
+ * step 4b, inside the flock, between db_ensure_table() and the socket unlink,
  * and REFUSES THE WHOLE START on -1. That is where "fail hard on a loose
  * secret" lives now: in front of an operator, before any session exists, which
  * is the only place where refusing prevents anything.
@@ -122,7 +123,7 @@
  * tetrisdb stop && tetrisdb start, which is already the documented recovery
  * for adding a table.
  */
-int tauth_secret_provision(const char *root, char *err, size_t errlen);
+int auth_secret_provision(const char *root, char *err, size_t errlen);
 
 /*
  * Read and validate <root>/auth/jwt_secret into out. Returns the byte count,
@@ -187,6 +188,6 @@ int tauth_secret_provision(const char *root, char *err, size_t errlen);
  *
  * Full reasoning: #58.
  */
-int tauth_secret_load(const char *root, unsigned char *out, size_t outlen);
+int auth_secret_load(const char *root, unsigned char *out, size_t outlen);
 
 #endif /* LIBTETRISAUTH_PROVISION_H */

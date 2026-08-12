@@ -14,6 +14,8 @@
 
 struct bcl_ctx {
   FILE *log;
+  void (*before_submit)(void *arg);
+  void *before_submit_arg;
   void *transport;  /* NULL until bcl_connect(); owned by transport.c.
                       * Voter ops (JOIN/CAST/UPDATE/RESULTS/CHECK) only. */
   char ctl_path[256]; /* '\0' until bcl_set_ctl_path(); admin ops

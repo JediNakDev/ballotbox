@@ -1,17 +1,17 @@
-#ifndef LIBTETRISAUTH_TAUTH_PRIV_H
-#define LIBTETRISAUTH_TAUTH_PRIV_H
+#ifndef LIBTETRISAUTH_AUTH_PRIV_H
+#define LIBTETRISAUTH_AUTH_PRIV_H
 
 /**
- * @file tauth_priv.h
- * @brief The entry point's own parts, split out of tauth.c.
+ * @fileauth.h
+ * @brief The entry point's own parts, split out ofauth.c.
  *
  * Beside its .c files and NOT in include/, for the reason
  * src/libtetrissh/common.h is: nothing outside this library may call any of
- * it. tetrisauth.h stays exactly #55's three functions.
+ * it. auth.h stays exactly #55's three functions.
  *
  * The split is by what a reader is looking for, not by layer:
  *
- *   tauth.c       the seam: the file-static block, the recv/reply loop, the
+ *  auth.c       the seam: the file-static block, the recv/reply loop, the
  *                 method arms, both scrubs, the attempt counter.
  *   authconf.c    the .tetrishrc read: which keys, their ranges, the
  *                 load-until-it-works rule.
@@ -29,6 +29,8 @@
  */
 
 #include <limits.h>
+
+#include "libtetrisutil/limits.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -41,12 +43,13 @@
  * the login path is the other end of them. Full tables and their owners are in
  * docs/libtetrisauth.md.
  */
-typedef struct {
-  int max_attempts;       /**< auth_max_attempts, 1..100. */
-  int token_ttl;          /**< auth_token_ttl, 60..31536000 seconds. */
-  int pbkdf2_iters;       /**< auth_pbkdf2_iters, 1..10000000. */
-  int db_timeout_ms;      /**< db_timeout, in milliseconds. */
-  char db_sock[PATH_MAX]; /**< db_ipc, used as written. */
+typedef struct
+{
+    int max_attempts;           /**< auth_max_attempts, 1..100. */
+    int token_ttl;              /**< auth_token_ttl, 60..31536000 seconds. */
+    int pbkdf2_iters;           /**< auth_pbkdf2_iters, 1..10000000. */
+    int db_timeout_ms;          /**< db_timeout, in milliseconds. */
+    char db_sock[MAX_IPC_PATH]; /**< db_ipc, used as written. */
 } auth_conf_t;
 
 /** The configuration in force. NEVER NULL: before any successful load it holds
@@ -75,11 +78,12 @@ int auth_conf_load(void);
 /** The two fields of a LOGIN or REGISTER body, as pointers INTO the received
  * frame. Nothing is copied and nothing is NUL-terminated, which is what lets
  * one explicit scrub of the frame cover the plaintext (#48 decision 7). */
-typedef struct {
-  const char *user;
-  size_t user_len;
-  const char *pass;
-  size_t pass_len;
+typedef struct
+{
+    const char *user;
+    size_t user_len;
+    const char *pass;
+    size_t pass_len;
 } cred_t;
 
 /**
@@ -148,12 +152,13 @@ int cred_new_salt(char *out_hex, size_t cap);
  * because they are one thing to the client ("the account service is
  * unreachable"), answered with 500 and a guest fallback.
  */
-typedef enum {
-  ACCT_OK = 0,
-  ACCT_NO_USER,      /**< LOGIN: no row with that name. 404. */
-  ACCT_BAD_PASSWORD, /**< LOGIN: row found, digest mismatch. 401. */
-  ACCT_TAKEN,        /**< REGISTER: the name is already registered. 409. */
-  ACCT_UNAVAILABLE   /**< No answer within the deadline. 500. */
+typedef enum
+{
+    ACCT_OK = 0,
+    ACCT_NO_USER,      /**< LOGIN: no row with that name. 404. */
+    ACCT_BAD_PASSWORD, /**< LOGIN: row found, digest mismatch. 401. */
+    ACCT_TAKEN,        /**< REGISTER: the name is already registered. 409. */
+    ACCT_UNAVAILABLE   /**< No answer within the deadline. 500. */
 } acct_status_t;
 
 /**
@@ -185,4 +190,4 @@ acct_status_t account_login(const char *name, const cred_t *c, long long *id);
 acct_status_t account_register(const char *name, const cred_t *c,
                                long long *id);
 
-#endif /* LIBTETRISAUTH_TAUTH_PRIV_H */
+#endif /* LIBTETRISAUTH_AUTH_PRIV_H */

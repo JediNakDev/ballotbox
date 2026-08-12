@@ -805,7 +805,7 @@ static int test_a_killed_runner_can_still_be_stopped_and_restarted(void) {
  *
  * The socket path and the runner's stderr file are the launcher's, the same
  * way the lockfile's directory is - and a missing directory under the socket
- * surfaced as a Java bind failure that tdb_runner_wait() then reported as the
+ * surfaced as a Java bind failure that db_runner_wait() then reported as the
  * JDK-version trap, sending the reader somewhere the problem was not.
  */
 static int test_start_creates_the_directories_it_owns(void) {

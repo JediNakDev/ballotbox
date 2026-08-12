@@ -41,14 +41,14 @@
  *
  * LIVE_*: NOT a sandbox, unlike UNREACH_* - the shared project default
  * (var/db, var/run/tetrisdb.sock). See test_ballotd.c's LIVE_DB_DIR comment
- * for why: every voter-channel op now goes through tauth_login() first,
+ * for why: every voter-channel op now goes through auth_login() first,
  * which reads db_ipc/db_dir from .tetrishrc with no override this file can
  * reach, so the live-store tests use the same runner auth is already
  * committed to rather than sandbox ballotd's own tables away from it. */
 #define UNREACH_DB_DIR "var/db/test_client_transport_unreachable"
 #define UNREACH_DB_SOCK "var/run/test_client_transport_unreachable.sock"
-#define LIVE_DB_DIR TDB_DEFAULT_DIR
-#define LIVE_DB_SOCK TDB_DEFAULT_IPC
+#define LIVE_DB_DIR DB_DEFAULT_DIR
+#define LIVE_DB_SOCK DB_DEFAULT_IPC
 #define TEST_JAR "db/dist/simpledb.jar"
 
 static int tests_run = 0, tests_failed = 0;
@@ -126,7 +126,7 @@ static int stop_ballotd(pid_t pid) {
  * registering first if no such account exists yet - idempotent across
  * repeated `make test` runs against the same shared var/db (see
  * LIVE_DB_DIR's comment above). Every JOIN/CAST/UPDATE/RESULTS/CHECK is
- * unreachable until this succeeds - ballotd/session.c calls tauth_login()
+ * unreachable until this succeeds - ballotd/session.c calls auth_login()
  * before dispatching anything. */
 static int voter_login_or_register(bcl_ctx *ctx, const char *user) {
   int status = 0;
@@ -169,7 +169,7 @@ static int test_connect_fails_when_daemon_down(void) {
  * reachable store" case here anymore (this file used to have two: a
  * bu_join-shaped one and a bcl_send(RESULTS)-shaped one). Every voter op is
  * unreachable pre-auth now, and unlike ballotd's own db_exec calls,
- * libtetrisauth's tauth_login() does not honour this file's -d/-i sandbox
+ * libtetrisauth's auth_login() does not honour this file's -d/-i sandbox
  * at all - it reads db_ipc/db_dir from .tetrishrc unconditionally (see
  * LIVE_DB_DIR's comment above), which in practice means auth's reachability
  * here tracks whatever the AMBIENT shared runner's state happens to be,
@@ -495,12 +495,12 @@ static int have_java(void) {
  * idempotent, so a runner already up is left alone rather than fought
  * over. */
 static int start_live_runner(void) {
-  if (tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_ELECTION, BB_DB_SCHEMA_ELECTION) != 0 ||
-      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_OPTION, BB_DB_SCHEMA_OPTION) != 0 ||
-      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_ELIGIBLE, BB_DB_SCHEMA_ELIGIBLE) != 0 ||
-      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_BALLOT, BB_DB_SCHEMA_BALLOT) != 0 ||
-      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_OWNER, BB_DB_SCHEMA_OWNER) != 0 ||
-      tdb_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_NONCE, BB_DB_SCHEMA_NONCE) != 0) {
+  if (db_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_ELECTION, BB_DB_SCHEMA_ELECTION) != 0 ||
+      db_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_OPTION, BB_DB_SCHEMA_OPTION) != 0 ||
+      db_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_ELIGIBLE, BB_DB_SCHEMA_ELIGIBLE) != 0 ||
+      db_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_BALLOT, BB_DB_SCHEMA_BALLOT) != 0 ||
+      db_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_OWNER, BB_DB_SCHEMA_OWNER) != 0 ||
+      db_ensure_table(LIVE_DB_DIR, BB_DB_TABLE_NONCE, BB_DB_SCHEMA_NONCE) != 0) {
     fprintf(stderr, "test_client_transport: fixture: failed to provision tables\n");
     return -1;
   }
@@ -511,12 +511,12 @@ static int start_live_runner(void) {
   int start_rc = system("./bin/tetrisdb start >/dev/null 2>&1");
   (void)start_rc;
 
-  tdb_socket_opts_t sopts;
-  tdb_socket_opts_default(&sopts);
+  db_socket_opts_t sopts;
+  db_socket_opts_load(&sopts);
   for (int i = 0; i < 100; i++) {
-    tdb_socket_t *probe = tdb_socket_open(&sopts);
+    db_socket_t *probe = db_socket_open(&sopts);
     if (probe != NULL) {
-      tdb_socket_close(probe);
+      db_socket_close(probe);
       return 0;
     }
     nap(100);

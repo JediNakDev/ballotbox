@@ -10,12 +10,12 @@
  *
  * Identity is real, not typed-and-trusted: after connecting, this file runs
  * a genuine log-in-or-register exchange (bcl_auth, over the same session,
- * answered daemon-side by libtetrisauth's tauth_login() - unmodified, the
+ * answered daemon-side by libtetrisauth's auth_login() - unmodified, the
  * same library and the same PBKDF2/JWT machinery tetriSH's own tetrisu
  * uses) before anything voter-shaped is possible. The certificate name used
  * for eligibility from here on is the SERVER's confirmed username, not
  * anything this file could claim on its own - ballotd overwrites whatever a
- * request's Cert-Name header says with the tauth_login()-verified identity
+ * request's Cert-Name header says with the auth_login()-verified identity
  * (see ballotd/session.c), so a forged header buys nothing.
  */
 
@@ -79,7 +79,7 @@ static const char *result_text(bb_result_t rc) {
 /* ---- login / connect ---------------------------------------------------- */
 
 /* REGISTER's password bounds, mirroring libtetrisauth/credential.c's private
- * CRED_PASS_MIN/CRED_PASS_MAX (not exported - tauth_login() enforces the
+ * CRED_PASS_MIN/CRED_PASS_MAX (not exported - auth_login() enforces the
  * real rule server-side regardless; this only saves a wire round trip on
  * input that would just come back 400). Never enforced at LOGIN: raising
  * this later must not make an existing shorter password unloggable, same
@@ -89,7 +89,7 @@ static const char *result_text(bb_result_t rc) {
 
 /* One log-in-or-register attempt: a two-field form (password masked, bit 1),
  * sent as a real LOGIN/REGISTER over the session already open, answered by
- * ballotd's tauth_login(). Returns 1 with g_session.cert_name set to the
+ * ballotd's auth_login(). Returns 1 with g_session.cert_name set to the
  * server-confirmed username on success, 0 if the form was cancelled back to
  * the caller's menu. Loops on a rejection (wrong password, taken username,
  * ...) by reopening the same form with an inline error, same shape as

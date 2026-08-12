@@ -1,7 +1,7 @@
 # Test Inventory
 
 One line per test case, grouped by file. For the test *plan* (decision
-tables, traceability to use cases, milestones) see `../TEST.md` — this file
+tables, traceability to use cases, milestones) see `../TEST.md` - this file
 is just "what does `make test` actually run and what does each case check."
 
 Run everything: `make test` (from repo root). Each `tests/unit/*.c` file is
@@ -12,10 +12,10 @@ print `ok`/`FAILED` per case.
 
 ## Unit tests (`tests/unit/`)
 
-Pure logic, seams substituted (`tests/unit/support/fake_*_seams.h`) — no
+Pure logic, seams substituted (`tests/unit/support/fake_*_seams.h`) - no
 daemon, no SimpleDB, no network, no sockets.
 
-### `test_admin.c` — libballotclient admin logic (ballotctl)
+### `test_admin.c` - libballotclient admin logic (ballotctl)
 
 | Test | Detail |
 | --- | --- |
@@ -30,13 +30,13 @@ daemon, no SimpleDB, no network, no sockets.
 | `test_fold_eligible_rejection_with_null_bad_entry_does_not_crash` | `bad_entry` is optional |
 | `test_fold_eligible_empty_list_is_a_noop` | Zero entries in, zero out, no error |
 
-### `test_brain_concurrency.c` — `bb_record_ballot` under concurrency (U-22)
+### `test_brain_concurrency.c` - `bb_record_ballot` under concurrency (U-22)
 
 | Test | Detail |
 | --- | --- |
 | `test_U22_concurrent_recording` | 16 threads cast for 16 distinct voters simultaneously → 16 appends, 16 distinct hashes, all v1, no lost write |
 
-### `test_brain_config.c` — `bb_validate_config` (UC-1)
+### `test_brain_config.c` - `bb_validate_config` (UC-1)
 
 | Test | Detail |
 | --- | --- |
@@ -47,7 +47,7 @@ daemon, no SimpleDB, no network, no sockets.
 | `test_U05_minimum_valid_window_accepted` | close = open + 1s → `BB_OK` |
 | `test_validation_order_title_first` | Title is checked before options/time |
 
-### `test_brain_create.c` — `bb_create_election` (UC-1, postcondition half)
+### `test_brain_create.c` - `bb_create_election` (UC-1, postcondition half)
 
 | Test | Detail |
 | --- | --- |
@@ -58,7 +58,7 @@ daemon, no SimpleDB, no network, no sockets.
 | `test_desired_id_refused_when_taken` | `BB_ERR_CONFIG_ID_TAKEN` if the id already exists |
 | `test_store_failure_is_propagated` | A store error surfaces as itself, not swallowed |
 
-### `test_brain_eligibility.c` — `bb_check_eligibility` (UC-2, pure scan)
+### `test_brain_eligibility.c` - `bb_check_eligibility` (UC-2, pure scan)
 
 | Test | Detail |
 | --- | --- |
@@ -67,7 +67,7 @@ daemon, no SimpleDB, no network, no sockets.
 | `test_eligibility_partition_table` | Full partition sweep (empty list, one entry, many, not found) |
 | `test_empty_eligible_list_admits_nobody` | Zero-length list rejects every cert |
 
-### `test_brain_join.c` — `bb_join` (UC-2, admission decision)
+### `test_brain_join.c` - `bb_join` (UC-2, admission decision)
 
 | Test | Detail |
 | --- | --- |
@@ -81,7 +81,7 @@ daemon, no SimpleDB, no network, no sockets.
 | `test_store_failure_is_propagated` | `GET_ELECTION` failure surfaces as itself |
 | `test_store_failure_in_prior_ballot_lookup_is_propagated` | A failure in the prior-ballot lookup also surfaces as itself |
 
-### `test_brain_lifecycle.c` — election state transitions
+### `test_brain_lifecycle.c` - election state transitions
 
 | Test | Detail |
 | --- | --- |
@@ -92,7 +92,7 @@ daemon, no SimpleDB, no network, no sockets.
 | `test_published_is_terminal` | Nothing transitions out of PUBLISHED |
 | `test_no_self_transitions` | A state cannot transition to itself |
 
-### `test_brain_lookup.c` — `bb_lookup_hash` (UC-6)
+### `test_brain_lookup.c` - `bb_lookup_hash` (UC-6)
 
 | Test | Detail |
 | --- | --- |
@@ -103,7 +103,7 @@ daemon, no SimpleDB, no network, no sockets.
 | `test_unknown_election_not_found` | Unknown election id → not found |
 | `test_store_failure_is_not_a_miss` | A store error is never reported as "hash not found" |
 
-### `test_brain_record.c` — `bb_record_ballot` (UC-3/UC-4)
+### `test_brain_record.c` - `bb_record_ballot` (UC-3/UC-4)
 
 | Test | Detail |
 | --- | --- |
@@ -118,7 +118,7 @@ daemon, no SimpleDB, no network, no sockets.
 | `test_U24_repeated_updates_latest_counts` | v1→v2→v3, each prior version superseded in turn |
 | `test_unknown_election_rejected` | Unknown election id → not found |
 
-### `test_brain_results.c` — `bb_publish_results` / `bb_get_results` (UC-5)
+### `test_brain_results.c` - `bb_publish_results` / `bb_get_results` (UC-5)
 
 | Test | Detail |
 | --- | --- |
@@ -130,14 +130,14 @@ daemon, no SimpleDB, no network, no sockets.
 | `test_results_carry_the_election_title` | `fetch_results` fills `out.title` from the loaded election |
 | `test_unknown_election_not_found` | Unknown id → not found, for publish and results alike |
 
-### `test_brain_secrecy.c` — no ballot-to-voter link in logs (R2)
+### `test_brain_secrecy.c` - no ballot-to-voter link in logs (R2)
 
 | Test | Detail |
 | --- | --- |
 | `test_U21_no_cert_appears_in_any_log_line` | A distinctive cert never appears in a rendered log line; the hash does |
 | `test_U21_prior_ballot_query_binds_the_cert` | The prior-ballot query carries the cert as a bound parameter, not rendered |
 
-### `test_codec.c` — HTTTP wire codec (`libballotclient/codec.c`)
+### `test_codec.c` - HTTTP wire codec (`libballotclient/codec.c`)
 
 | Test | Detail |
 | --- | --- |
@@ -161,7 +161,7 @@ daemon, no SimpleDB, no network, no sockets.
 | `test_decode_response_rejects_unrecognised_status_name` | Unknown status name → decode failure |
 | `test_http_status_bucket_is_always_a_known_reason` | Every `bb_result_t` maps to a real HTTP status bucket |
 
-### `test_voter.c` — pure voter decision functions (ballotu)
+### `test_voter.c` - pure voter decision functions (ballotu)
 
 | Test | Detail |
 | --- | --- |
@@ -174,7 +174,7 @@ daemon, no SimpleDB, no network, no sockets.
 | `test_U33_receipt_kdf_deterministic` | Same secret key → same receipt hash, twice |
 | `test_U34_distinct_keys_distinct_hashes` | Different keys → different hashes, no collision |
 
-### `test_voter_flow.c` — voter session flows: `bu_join` / `bu_submit_vote`
+### `test_voter_flow.c` - voter session flows: `bu_join` / `bu_submit_vote`
 
 | Test | Detail |
 | --- | --- |
@@ -194,12 +194,12 @@ daemon, no SimpleDB, no network, no sockets.
 
 ## Integration tests (`tests/`)
 
-Real `ballotd`, real SimpleDB, real client library — the closest thing this
+Real `ballotd`, real SimpleDB, real client library - the closest thing this
 project has to end-to-end. Cases marked "(live store)" need the shared
 SocketRunner (`java` + `db/dist/simpledb.jar`); everything else runs
 against a deliberately-unreachable store to check clean failure.
 
-### `test_ballotd.c` — the real daemon, both channels
+### `test_ballotd.c` - the real daemon, both channels
 
 | Test | Detail |
 | --- | --- |
@@ -215,7 +215,7 @@ against a deliberately-unreachable store to check clean failure.
 | `two CREATEs share one admin thread (live store)` | Concurrent admin requests serialize correctly |
 | `CREATE then JOIN round trips (live store)` | Full admin-create → voter-join path, real auth, real DB |
 
-### `test_client_transport.c` — the real client library (`bcl_connect`/`bcl_send`)
+### `test_client_transport.c` - the real client library (`bcl_connect`/`bcl_send`)
 
 | Test | Detail |
 | --- | --- |
@@ -229,24 +229,52 @@ against a deliberately-unreachable store to check clean failure.
 | `rejoin after cast reports prior ballot (live store)` | Cast, disconnect, fresh session, re-login, JOIN again → prior ballot reported, routes to update |
 | `ADMIN_RESULTS includes the election title (live store)` | Real create→open→close→publish→results, title present on the wire |
 
+### `test_system_e2e.c` - strict path-complete system suite
+
+This executable requires Java, `db/dist/simpledb.jar`, and all BallotBox runtime executables.
+It fails instead of skipping when a dependency is unavailable.
+
+Each named case creates a private temporary root, SimpleDB files, JVM runner, account store, JWT secret, daemon, control socket, TCP port, log, and client processes.
+The case tears down every process and file after either success or failure.
+Run one path independently with `bin/test_system_e2e CASE-ID`.
+
+| Use case | Independently named cases |
+| --- | --- |
+| UC-1 | `UC1-MAIN`, `UC1-2A-TITLE`, `UC1-2A-OPTIONS-ZERO`, `UC1-2A-OPTIONS-ONE`, `UC1-2A-TIME-EQUAL`, `UC1-2A-TIME-REVERSED`, `UC1-ID-TAKEN` |
+| UC-2 | `UC2-MAIN`, `UC2-4A-DRAFT`, `UC2-4A-CLOSED`, `UC2-4A-PUBLISHED`, `UC2-2A`, `UC2-2B`, `UC2-3A` |
+| UC-3 | `UC3-MAIN`, `UC3-1B`, `UC3-1A`, `UC3-4A`, `UC3-LOG` |
+| UC-4 | `UC4-MAIN`, `UC4-1B`, `UC4-1A`, `UC4-4A`, `UC4-RECONNECT` |
+| UC-5 | `UC5-MAIN`, `UC5-2A`, `UC5-3A-DRAFT`, `UC5-3A-OPEN`, `UC5-3A-CLOSED` |
+| UC-6 | `UC6-MAIN`, `UC6-4A` |
+| UC-7 | `UC7-MAIN`, `UC7-ERR-DRAFT`, `UC7-SELF-CLOSED`, `UC7-ERR-PUBLISHED` |
+| UC-8 | `UC8-MAIN`, `UC8-ERR-DRAFT`, `UC8-ERR-OPEN`, `UC8-SELF-PUBLISHED` |
+| Shared lifecycle | `LC-DRAFT-OPEN`, `LC-SELF-OPEN`, `LC-ERR-CLOSED-OPEN`, `LC-ERR-PUBLISHED-OPEN` |
+| Full journey | `JOURNEY` |
+
+The UC-3 and UC-4 close-race cases block the submitting thread after encryption and before transport.
+The admin closes the election through the live control socket, then the test releases the request and verifies rejection and unchanged persistence.
+The lifecycle cases restart `ballotd` and recreate the admin client after legal transitions to prove that state survives both reconnections.
+The logging case requires the successful receipt in the real daemon log and rejects any line that links the voter name to an option.
+
 ---
 
 ## Infrastructure tests (`tests/`)
 
 Shared components ported from tetriSH (`libtetrisdb`, `tetrislogd`,
-`libtetrisauth`, `bin/tetrisdb`). No seams — these test the seam
+`libtetrisauth`, `bin/tetrisdb`).
+No seams - these test the seam
 *implementations* themselves, spawning real processes (a JVM for the D/auth
 runner cases, the real `bin/tetrislogd`/`bin/tetrisdb`). D/auth-runner cases
 need `java` + the built jar and skip visibly without them.
 
-### `test_db.c` — `libtetrisdb` (table creation, quoting, socket protocol)
+### `test_db.c` - `libtetrisdb` (table creation, quoting, socket protocol)
 
 | Test | Detail |
 | --- | --- |
 | `creates catalog entry and one-page data file` | Fresh table is exactly one 4096-byte page |
-| `second create leaves existing table alone` | `tdb_ensure_table` is idempotent, no truncation |
+| `second create leaves existing table alone` | `db_ensure_table` is idempotent, no truncation |
 | `refuses to run without a data directory` | No dir configured → clean refusal |
-| `quotes plain text` | `tdb_quote` wraps a plain string |
+| `quotes plain text` | `db_quote` wraps a plain string |
 | `doubles embedded quotes` | `it's` → `'it''s'` |
 | `keeps an injection payload inside one literal` | SQL injection payload stays one closed literal |
 | `truncates without breaking the literal` | Worst-case quote doubling still fits the buffer, still closed |
@@ -258,17 +286,17 @@ need `java` + the built jar and skip visibly without them.
 | `gives up waiting for a runner that is not coming` | Startup deadline is honoured |
 | `fails at once when no runner is listening` | No retry storm against a dead socket |
 | `gives up on a connection that is never greeted` | Missing `<<READY>>` → clean timeout |
-| `keeps returning TDB_TIMEOUT once the deadline has passed` | Deadline is sticky, not re-armed per call |
-| `reports a deadlock abort as TDB_RETRY, not an error` | Deadlock victim is a distinct, retryable outcome |
+| `keeps returning DB_TIMEOUT once the deadline has passed` | Deadline is sticky, not re-armed per call |
+| `reports a deadlock abort as DB_RETRY, not an error` | Deadlock victim is a distinct, retryable outcome |
 | `returns the body of a rejected statement` | Error body is preserved for the caller |
-| `reports a runner that hangs up as TDB_IO` | Peer disconnect mid-exchange is its own status |
+| `reports a runner that hangs up as DB_IO` | Peer disconnect mid-exchange is its own status |
 | `refuses a statement carrying a newline` | Multi-statement injection via embedded newline is refused |
 | `writes rows and reads them back after restart` | Data survives a clean runner restart |
 | `counts a rejected statement and keeps going` | One bad statement doesn't kill the connection |
 | `reads rows over a socket and survives a bad statement` | Real SocketRunner round trip, real jar |
 | `commits and rolls back across statements` | Multi-statement transaction semantics, real runner |
 
-### `test_logd.c` — `tetrislogd`
+### `test_logd.c` - `tetrislogd`
 
 | Test | Detail |
 | --- | --- |
@@ -280,7 +308,7 @@ need `java` + the built jar and skip visibly without them.
 | `burst never blocks sender` | 20000 records while the daemon is `SIGSTOP`'d never blocks the caller |
 | `refuses non-socket path` | Daemon refuses to bind over an existing regular file |
 
-### `test_rc.c` — `.tetrishrc` configuration contract
+### `test_rc.c` - `.tetrishrc` configuration contract
 
 | Test | Detail |
 | --- | --- |
@@ -294,7 +322,7 @@ need `java` + the built jar and skip visibly without them.
 | `missing files are distinct` | A missing file is distinguishable from an empty one |
 | `invalid log config refuses startup` | A bad `log_*` value stops the daemon from starting |
 
-### `test_tetrisdb.c` — `bin/tetrisdb` CLI
+### `test_tetrisdb.c` - `bin/tetrisdb` CLI
 
 | Test | Detail |
 | --- | --- |
@@ -317,7 +345,7 @@ need `java` + the built jar and skip visibly without them.
 | `a shutdown timeout never escalates to SIGKILL` | `stop` respects the graceful-shutdown contract |
 | `runner: the real jar starts through bin/tetrisdb start` | Real JVM, real jar, skips without them |
 
-### `test_jwt.c` — JWT mint/verify (`libtetrisauth/jwt.c`)
+### `test_jwt.c` - JWT mint/verify (`libtetrisauth/jwt.c`)
 
 | Test | Detail |
 | --- | --- |
@@ -341,7 +369,7 @@ need `java` + the built jar and skip visibly without them.
 | `refuses a secret shorter than the hash output` | Weak secret length rejected at mint time |
 | `refuses an output buffer too small` | Undersized output buffer is a clean refusal, not an overflow |
 
-### `test_auth.c` — `libtetrisauth` entry point (`tauth_login`/`tauth_offer`)
+### `test_auth.c` - `libtetrisauth` entry point (`auth_login`/`auth_offer`)
 
 | Test | Detail |
 | --- | --- |

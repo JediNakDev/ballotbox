@@ -1,8 +1,8 @@
-#include "tetrish/system_program.h"
+#include "../system_program.h"
 
 #ifdef __APPLE__
-#include <sys/sysctl.h>
 #include <mach/mach.h>
+#include <sys/sysctl.h>
 #endif
 
 /*
@@ -135,11 +135,11 @@ int execute(char **args)
 
     printf(COLOR_CYAN "OS:      " COLOR_RESET "%s\n", sys_info.sysname);
     printf(COLOR_CYAN "Host:    " COLOR_RESET "%s\n", sys_info.nodename);
-    printf(COLOR_CYAN "Kernel:  " COLOR_RESET "%s %s\n",
-           sys_info.release, sys_info.machine);
+    printf(COLOR_CYAN "Kernel:  " COLOR_RESET "%s %s\n", sys_info.release,
+           sys_info.machine);
     printf(COLOR_CYAN "User:    " COLOR_RESET "%s\n", username);
-    printf(COLOR_CYAN "CPU:     " COLOR_RESET "%s (%ld cores)\n",
-           cpu_model, get_cpu_count());
+    printf(COLOR_CYAN "CPU:     " COLOR_RESET "%s (%ld cores)\n", cpu_model,
+           get_cpu_count());
     if (total_mem > 0)
     {
         printf(COLOR_CYAN "Memory:  " COLOR_RESET "%.2f GiB (%llu bytes)\n",

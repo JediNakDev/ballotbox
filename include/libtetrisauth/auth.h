@@ -2,7 +2,7 @@
 #define LIBTETRISAUTH_H
 
 /**
- * @file tetrisauth.h
+ * @file auth.h
  * @brief The pre-auth exchange, owned end to end.
  *
  * The whole surface src/tetrisd/session.c sees. libtetrisauth owns the client
@@ -20,7 +20,7 @@
  *
  * BEING IN THE POLL LOOP IS THE PROOF OF AUTHENTICATION. There is no pre-auth
  * flag on Session, nothing in SessionState, no session_is_authed(). The loop
- * cannot start until tauth_login() returns TAUTH_OK, so the illegal state is
+ * cannot start untilauth_login() returns AUTH_OK, so the illegal state is
  * unrepresentable rather than guarded. Moving the call is the one thing that
  * breaks it, and nothing catches that.
  *
@@ -33,7 +33,7 @@
  * STATE IS FILE-STATIC, and that is not a smell here: tetrisd forks and execs
  * this binary per accept, so one process serves one identity for its whole
  * life and there is no second instance to collide with. Nothing resets, and
- * there is deliberately no tauth_reset_for_test() - a test that wants a fresh
+ * there is deliberately noauth_reset_for_test() - a test that wants a fresh
  * counter forks, because that is the shape that ships. Nothing caches whether
  * the database or the JWT secret is reachable: a cached outage would be a
  * degradation that never recovers, so reachability is rediscovered by every
@@ -56,19 +56,20 @@
 #include "libtetrissh/tetrissh.h"
 #include "libtetrisutil/sessionstate.h"
 
-/** tauth_login()'s two outcomes. An anonymous enum rather than a typedef: this
+/**auth_login()'s two outcomes. An anonymous enum rather than a typedef: this
  * header exports three functions and no types, so nothing of ours can end up
  * as a member of one of session.c's structs. */
-enum {
-    TAUTH_OK   = 0, /**< The client is an account or an accepted guest. */
-    TAUTH_DROP = 1  /**< Hung up, or burned auth_max_attempts. */
+enum
+{
+    AUTH_OK = 0,  /**< The client is an account or an accepted guest. */
+    AUTH_DROP = 1 /**< Hung up, or burned auth_max_attempts. */
 };
 
 /**
  * Runs the pre-auth exchange to completion.
  *
  * Called once by session.c, after session_accept() succeeds and before the
- * poll loop, which must not start until this returns TAUTH_OK.
+ * poll loop, which must not start until this returns AUTH_OK.
  *
  * Blocks. It owns its recv/reply loop on sh and answers on the wire itself.
  * "Still pre-auth" never escapes - that is a loop iteration in here, not a
@@ -80,13 +81,13 @@ enum {
  *
  * @param sh  The established session. Untouched apart from the frames that
  *            cross it; nothing here holds a resource outliving the call.
- * @returns TAUTH_OK, or TAUTH_DROP for the caller to close as it already does
+ * @returns AUTH_OK, or AUTH_DROP for the caller to close as it already does
  *          for a client that hung up.
  */
-int tauth_login(session_t *sh);
+int auth_login(session_t *sh);
 
 /**
- * One dispatch arm: a LOGIN, REGISTER or GUEST arriving after tauth_login().
+ * One dispatch arm: a LOGIN, REGISTER or GUEST arriving afterauth_login().
  *
  * Called as a guard at the top of session_dispatch()'s existing switch.
  * Deleting the call is not the same change: without it a post-login LOGIN
@@ -106,7 +107,7 @@ int tauth_login(session_t *sh);
  * not unread it, and the plaintext genuinely landed in the caller's buffer, so
  * the scrub cannot be moved, only made invisible.
  *
- * The session it replies on is the one tauth_login() was handed, retained in
+ * The session it replies on is the oneauth_login() was handed, retained in
  * the same file-static block as everything else here. Do not widen this call
  * site to pass one.
  *
@@ -117,7 +118,7 @@ int tauth_login(session_t *sh);
  * @returns true if it consumed the method, false if the request is none of its
  *          business.
  */
-bool tauth_offer(const htttp_request_t *req, const SessionState *st);
+bool auth_offer(const htttp_request_t *req, const SessionState *st);
 
 /**
  * This client's roster display name, or "" for a guest.
@@ -137,6 +138,6 @@ bool tauth_offer(const htttp_request_t *req, const SessionState *st);
  *             string, and a roster that silently renames people is worse than
  *             a registration that refuses a long name up front.
  */
-void tauth_name(char *dst, size_t cap);
+void auth_name(char *dst, size_t cap);
 
 #endif /* LIBTETRISAUTH_H */

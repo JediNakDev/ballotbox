@@ -30,7 +30,8 @@
  *
  * The order matters to nothing; branch on the value, never on its number.
  */
-typedef enum {
+typedef enum
+{
     AUTH_VERDICT_OK,      /**< 2xx: the exchange resolved, identity is fixed. */
     AUTH_VERDICT_REFUSED, /**< Refused, and it did not count. */
     AUTH_VERDICT_COUNTED  /**< Refused because the credentials were wrong. */
@@ -40,11 +41,12 @@ typedef enum {
  * One connection's attempt budget. Zero-initialise it, or call
  * auth_budget_reset(); every field is derived and none is a caller's to read.
  */
-typedef struct {
-    int  failures;   /**< Counted refusals so far on this connection. */
-    bool armed;      /**< The last verdict was a counted 401, so a hangup now
-                          would be cap exhaustion. Consumed by
-                          auth_budget_hangup_is_cap(). */
+typedef struct
+{
+    int failures; /**< Counted refusals so far on this connection. */
+    bool armed;   /**< The last verdict was a counted 401, so a hangup now
+                       would be cap exhaustion. Consumed by
+                       auth_budget_hangup_is_cap(). */
 } auth_budget_t;
 
 /** Clears the budget. Called when a connection opens; a new connection is a

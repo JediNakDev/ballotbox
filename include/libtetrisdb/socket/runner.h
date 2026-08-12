@@ -20,9 +20,9 @@
  *
  * The reason the spawn is here rather than in the launcher is ADR 0001's:
  * resolving and validating the java/jar pair has to be shared with
- * tdb_start(), or the version trap gets two homes again.
+ * db_start(), or the version trap gets two homes again.
  *
- * NOTHING HERE MAY BE CACHED. tdb_runner_wait() decides what an operator is
+ * NOTHING HERE MAY BE CACHED. db_runner_wait() decides what an operator is
  * told and what a one-shot command exits with. It gates nothing, and no
  * component may hold state describing whether the runner is reachable: a
  * probe's answer expires immediately, and code that remembers it can refuse a
@@ -30,70 +30,46 @@
  */
 
 #include <limits.h>
+
+#include "libtetrisutil/limits.h"
 #include <stddef.h>
 #include <sys/types.h>
+#include <sys/un.h>
 
-/** Complete db_ namespace, kept beside the parser that owns its meaning.
- * NULL-terminated so validators and drift tests cannot disagree about a
- * separately maintained count. */
-extern const char *const tdb_rc_keys[];
+#define DB_DEFAULT_IPC "var/run/tetrisdb.sock"
+#define DB_IPC_MAX (sizeof(((struct sockaddr_un *)0)->sun_path) - 1)
 
+#define DB_DEFAULT_TIMEOUT_MS 2000
+#define DB_TIMEOUT_MIN_MS 100
+#define DB_TIMEOUT_MAX_MS 60000
+#define DB_DEFAULT_DIR "var/db"               /**< db_dir default. */
+#define DB_DEFAULT_JAR "db/dist/simpledb.jar" /**< db_jar default. */
+#define DB_DEFAULT_JAVA "java"                /**< db_java default. */
+#define DB_DEFAULT_ERR_PATH "var/log/tetrisdb.err"
+#define DB_DEFAULT_SESSIONS 16
+#define DB_RUNNER_DEFAULT_WAIT_MS 10000
 /** How to start a runner. Fixed buffers so an rc overlay can rewrite a field
- * in place, matching tdb_opts_t and tdb_socket_opts_t. */
-typedef struct {
+ * in place, matching db_opts_t and db_socket_opts_t. */
+typedef struct
+{
     char dir[PATH_MAX];  /**< Data directory holding catalog.txt and *.dat. */
     char jar[PATH_MAX];  /**< simpledb.jar for the classpath. */
     char java[PATH_MAX]; /**< java binary, resolved through PATH. */
-    char ipc[PATH_MAX];  /**< Unix socket to bind; the db_ipc rc key. */
-    int  sessions;       /**< Concurrent sessions served; 0 = the default. */
-    int  recover;        /**< Run the startup recovery pass; see below. */
-} tdb_runner_opts_t;
-
-/**
- * Seeds *opts with libtetrisdb/socket/conf.h's defaults.
- *
- * Unlike tdb_opts_default(), dir defaults to var/db: the one-shot launcher
- * protects that directory with an inherited flock and refuses a catalog that
- * declares tetrislogd's table, so its two guards replace the pipe module's
- * need to leave ownership unnamed.
- *
- * RECOVERY DEFAULTS ON AND SHOULD STAY ON. SimpleDB flushes a transaction's
- * pages before writing its commit record, so a crash in that window leaves
- * pages belonging to a transaction that never committed, and the startup pass
- * undoes exactly those. It is a no-op on a clean log. The field exists only
- * because SimpleDB's write-ahead log is a file named "log" in the CURRENT
- * DIRECTORY, shared by every runner started from the same place, so a test
- * that creates a fresh table each run recovers a previous run's records onto
- * it. That is a test's problem, not an operator's.
- *
- * @param opts  Receives the defaults.
- */
-void tdb_runner_opts_default(tdb_runner_opts_t *opts);
-
-/**
- * Overlays db_ directives from rc_path onto *opts, ignoring other namespaces.
- *
- * The update is transactional: *opts is unchanged on failure. db_timeout is
- * validated even though the launcher does not consume it, because this module
- * owns the complete db_ namespace and bin/tetrisdb is its validator.
- *
- * @param rc_path  File to read.
- * @param opts     Seeded with defaults by the caller; overlaid here.
- * @returns The directive count, or -1 when the file is missing, a db_ value is
- *          invalid, or an unknown db_ key is present (message on stderr).
- */
-int tdb_runner_opts_load(const char *rc_path, tdb_runner_opts_t *opts)
-    __attribute__((warn_unused_result));
+    char err_path[PATH_MAX]; /**< File receiving the runner's stderr. */
+    char ipc[MAX_IPC_PATH]; /**< Unix socket to bind; the db_ipc rc key. */
+    int sessions;           /**< Concurrent sessions served; 0 = the default. */
+    int recover;            /**< Run the startup recovery pass; see below. */
+} db_runner_opts_t;
 
 /**
  * Takes the directory lock that makes one runner per data directory.
  *
  * Called by a launcher before any other startup step, and held across
- * tdb_runner_spawn() so the JVM inherits it: the kernel then releases it
+ * db_runner_spawn() so the JVM inherits it: the kernel then releases it
  * exactly when the runner dies, including after SIGKILL, with no cleanup path
  * to get wrong.
  *
- * The returned descriptor is guaranteed to satisfy tdb_runner_spawn()'s two
+ * The returned descriptor is guaranteed to satisfy db_runner_spawn()'s two
  * requirements - above fd 2, and not FD_CLOEXEC. Those used to be prose in
  * this header and an F_DUPFD dance in the caller; they are enforced here
  * because this is the module that imposes them.
@@ -107,7 +83,7 @@ int tdb_runner_opts_load(const char *rc_path, tdb_runner_opts_t *opts)
  * @returns The locked descriptor, or -1 if the directory is unusable or a
  *          runner already owns it (message on stderr). Close it to release.
  */
-int tdb_runner_lock(const char *db_dir, char *path, size_t cap)
+int db_runner_lock(const char *db_dir, char *path, size_t cap)
     __attribute__((warn_unused_result));
 
 /**
@@ -116,7 +92,7 @@ int tdb_runner_lock(const char *db_dir, char *path, size_t cap)
  * Returning rather than exec'ing in place is what lets the caller hold a lock
  * across the start: A FILE LOCK HELD BY THE CALLER IS INHERITED BY THE JVM, so
  * the lock lives exactly as long as the runner does, with no cleanup path to
- * get wrong. That is ADR 0002's central trick, and tdb_runner_lock() is what
+ * get wrong. That is ADR 0002's central trick, and db_runner_lock() is what
  * produces a descriptor fit for it.
  *
  * Refuses before forking if the jar is unreadable, java does not run, or the
@@ -137,7 +113,7 @@ int tdb_runner_lock(const char *db_dir, char *path, size_t cap)
  * @returns The child's pid, or -1 with no child left behind (message on
  *          stderr).
  */
-pid_t tdb_runner_spawn(const tdb_runner_opts_t *opts, int err_fd);
+pid_t db_runner_spawn(const db_runner_opts_t *opts, int err_fd);
 
 /**
  * Waits until the runner answers on ipc.
@@ -158,6 +134,6 @@ pid_t tdb_runner_spawn(const tdb_runner_opts_t *opts, int err_fd);
  *          (message on stderr, naming the JDK-mismatch trap when the child
  *          exited immediately).
  */
-int tdb_runner_wait(const char *ipc, pid_t pid, int timeout_ms);
+int db_runner_wait(const char *ipc, pid_t pid, int timeout_ms);
 
 #endif /* LIBTETRISDB_SOCKET_RUNNER_H */
