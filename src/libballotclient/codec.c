@@ -151,6 +151,28 @@ static int body_append(char *buf, size_t cap, size_t *off, const char *fmt, ...)
   int n = vsnprintf(buf + *off, cap - *off, fmt, ap);
   va_end(ap);
   if (n < 0 || (size_t)n >= cap - *off) return -1;
+
+  /* The body is line-structured, so a field carrying its own line break is
+   * not a field with an odd character in it - it is extra lines.
+   *
+   * An election titled "Budget\neligible=mallory" encodes to a CREATE body
+   * with an extra eligible= line in it, and the daemon reads what was sent,
+   * not what was meant. The same input also fails to survive a round trip
+   * (decode splits it back into two fields), which is how it was found -
+   * tests/fuzz/fuzz_codec_request, on a title carrying a CR.
+   *
+   * Checked here rather than at the twenty-odd call sites: this is the only
+   * function that puts a caller's string into the body, so it is the only
+   * place the rule can be stated once. A newline as the LAST character is the
+   * line terminator the format strings write deliberately; anywhere else, and
+   * any CR at all, came out of a %s. Rejecting is right rather than escaping:
+   * there is no unescaper on the other side, and inventing one would make the
+   * wire format two formats. */
+  for (int i = 0; i < n; i++) {
+    char ch = buf[*off + (size_t)i];
+    if (ch == '\r' || (ch == '\n' && i != n - 1)) return -1;
+  }
+
   *off += (size_t)n;
   return 0;
 }
@@ -160,6 +182,14 @@ static int body_append(char *buf, size_t cap, size_t *off, const char *fmt, ...)
 typedef void (*kv_fn)(const char *key, const char *val, void *ctx);
 
 static void body_for_each(const uint8_t *body, uint32_t body_len, kv_fn fn, void *ctx) {
+  /* A bodyless message arrives here as (NULL, 0) - htttp leaves req->body
+   * NULL when there is no body, and both decoders call this unconditionally
+   * rather than checking at each of their call sites. NULL + 0 is undefined
+   * behaviour even though every compiler in practice yields NULL, so the
+   * check is here rather than in the five callers. Found by
+   * tests/fuzz/fuzz_codec_request and fuzz_codec_response. */
+  if (body == NULL || body_len == 0) return;
+
   const char *p = (const char *)body;
   const char *end = p + body_len;
   while (p < end) {
@@ -621,5 +651,26 @@ int bcl_decode_response(const htttp_response_t *http, bcl_response_t *resp) {
 
   resp_ctx_t c = {resp, 0, 0, 0};
   body_for_each(http->body, http->body_len, response_kv, &c);
+
+  /* The counts are what the SENDER claimed; these are what actually arrived.
+   *
+   * tally_count= and hash_count= are read straight off the wire by atoi,
+   * while the row= and option= writers stop at BB_MAX_OPTIONS/BB_MAX_VOTERS -
+   * so a body saying "hash_count=78" with two rows in it produced a struct
+   * announcing 78 entries in a 64-entry array with 2 of them filled. Every
+   * caller loops to the count, so the daemon (or anything able to answer as
+   * it) chose how far past the array its client would read. A negative count
+   * did the same in the other direction.
+   *
+   * Clamping rather than rejecting: a short or over-claimed table is the
+   * daemon disagreeing with itself, not a reason to throw away a response
+   * whose status= line is perfectly readable - and the tally is only ever
+   * displayed alongside the rows it came with. Found by
+   * tests/fuzz/fuzz_codec_response. */
+  if (resp->hash_count < 0 || resp->hash_count > c.row_i)
+    resp->hash_count = c.row_i;
+  if (resp->option_count < 0 || resp->option_count > BB_MAX_OPTIONS)
+    resp->option_count = c.result_opt_i;
+
   return c.status_valid ? 0 : -1;
 }
