@@ -201,6 +201,7 @@ TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR) -Itests/unit/support
 # degrades to a fixed id when unreachable), but the symbols still need to
 # resolve.
 # -ltetrisutil: bc_fold_eligible (admin.c) calls libtetrisutil/playername.c's
+# -ltetrisutil: bc_fold_eligible (admin.c) calls libtetrisutil/playername.c's
 # player_name_ok/player_name_fold directly (the same fold every real
 # username goes through), so libballotclient.a now has an unresolved
 # reference into libtetrisutil.a for every test that links it - which, per the
@@ -209,6 +210,9 @@ TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR) -Itests/unit/support
 # see that comment. Each test defines the seams it wants to substitute;
 # because the libraries are static archives, a seam defined in the test keeps
 # the real member out of the binary (see tests/unit/support/fake_*_seams.h).
+# $(LDFLAGS), not a bare -L$(LIB_DIR): LDFLAGS carries the Homebrew OpenSSL
+# -L as well, and without it -lssl/-lcrypto below resolve on a Linux distro
+# package and fail on macOS, where OpenSSL is off the default search path.
 TEST_LDLIBS := $(LDFLAGS) $(GRP_START) -lballotclient -lballotbrain -lhtttp -ltetrissh -ltetrisdb -ltetrisutil $(GRP_END) -lssl -lcrypto -lpthread
 
 $(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNITY_DIR)/unity.c $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(HEADERS)
@@ -244,6 +248,7 @@ $(BIN_DIR)/test_logd: tests/test_logd.c $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/te
 # test_logd needing bin/tetrislogd). Needs libtetrissh/libhtttp/libballot*
 # directly for the client-side handshake and codec calls the test makes.
 $(BIN_DIR)/test_ballotd: tests/test_ballotd.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
+	$(CC) $(CFLAGS) tests/test_ballotd.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -ltetrisutil -lssl -lcrypto -lpthread
 	$(CC) $(CFLAGS) tests/test_ballotd.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -ltetrisutil -lssl -lcrypto -lpthread
 
 # Real-process E2E for the client side of the same picture: drives the real
