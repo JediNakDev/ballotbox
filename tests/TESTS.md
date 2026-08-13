@@ -8,6 +8,11 @@ Run everything: `make test` (from repo root). Each `tests/unit/*.c` file is
 its own Unity binary; `tests/test_*.c` files bring their own harness and
 print `ok`/`FAILED` per case.
 
+Not listed here: the fuzz targets under `tests/fuzz/`. They have no case list
+by design - each one states a property and lets a fuzzer generate the inputs -
+so they are documented in `fuzz/FUZZING.md` and run by `make fuzz-regress`
+(seconds, deterministic) and `make fuzz-smoke` (a minute of mutation each).
+
 ---
 
 ## Unit tests (`tests/unit/`)

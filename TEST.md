@@ -206,6 +206,67 @@ Precondition: daemon started per case against a scratch socket and log file, sto
 
 ---
 
+## Robustness Test Cases
+
+### Approach
+
+Every case above states an input and the answer it expects.
+The cases here state no input at all: they name a property the code must hold on **any** input, and a fuzzer generates the inputs - millions of them, guided by which branches each one reaches.
+That difference is the point.
+A unit case can only assert what someone thought to write down, and the inputs that break a parser are by definition the ones nobody thought of.
+
+The targets live in `tests/fuzz/`, one per parser, each pairing a code path with the properties its header promises.
+Full detail - how to run a campaign, why the build needs two compilers, what to do with a crash - is in `tests/fuzz/FUZZING.md`; this section is the case list and the milestones.
+
+Ranked by how much untrusted input reaches the code and how much fixed-size copying it does with it:
+
+| Case | Target | Code under test | Property asserted beyond "does not crash" |
+| ---- | ------ | --------------- | ----------------------------------------- |
+| F-01 | `fuzz_htttp_request` | `htttp_parse_request` | Fields NUL-terminated, header count inside its array, body slice inside the input buffer; parse -> serialize -> parse is stable |
+| F-02 | `fuzz_htttp_response` | `htttp_parse_response` | The same, plus a status in 100..599 |
+| F-03 | `fuzz_codec_request` | `htttp_parse_request` + `bcl_decode_request` | Every count inside `BB_MAX_*`, `payload_len <= BB_CIPHERTEXT_MAX`; decode -> encode -> decode is a fixed point |
+| F-04 | `fuzz_codec_response` | `htttp_parse_response` + `bcl_decode_response` | The same, for the counted arrays a hostile daemon controls (`tally_count`, `hash_count`) |
+| F-05 | `fuzz_jwt_verify` | `jwt_verify` | **No fuzzer-invented token verifies** (the signing key is private to the target); claims zeroed on every failure; same token, same verdict |
+| F-06 | `fuzz_rows` | `tdb_row_count`, `tdb_row_fields` | Every returned slice inside the reply body and free of TAB/LF; a row the count promised is readable; out-of-range rows are refused |
+| F-07 | `fuzz_rc_line` | `rc_classify_line` | The returned pointer is inside the caller's line and terminated within it; a command is trimmed; the verdict does not depend on the buffer around the line |
+| F-08 | `fuzz_rc_bind` | `rc_bind` | Only in-range values reach the struct; a defect is reported as two C strings; reading one file twice gives one answer |
+| F-09 | `fuzz_playername` | `player_name_ok`, `player_name_fold` | Nothing accepted carries LF, TAB or a quote; folding is total and idempotent; a rejected name writes nothing |
+| F-10 | `fuzz_ctl_frame` | `ctl_frame_read` | A frame declaring more than `cap` is refused; on success exactly `*len` bytes were written and nothing past them was touched |
+
+Findings so far - six bugs in the first two hours of running, all fixed, all
+filed as regression inputs in `tests/fuzz/regress/`:
+
+| Found by | Where | What | Why it matters |
+| -------- | ----- | ---- | -------------- |
+| F-01 | `htttp.c` `copy_token` | A NUL byte inside a header name was accepted. `"\0Cert-Name: alice"` parses, and every `htttp_header_get("Cert-Name")` then misses it | Header smuggling: the parser sees an identity header the app cannot. Same applied to method and path |
+| F-02 | `htttp.c` serializers | A message with exactly `HTTTP_MAX_HEADERS` headers serialized OK, then the generated `Date`/`Content-Length` made it one too many - a frame this library emits and its own parser rejects | Sender sees success, receiver sees a 400, nothing explains why |
+| F-03 | `codec.c` `body_append` | A text field carrying `\n` or `\r` became extra body lines. A title of `"Budget\neligible=mallory"` encodes to a CREATE with an extra `eligible=` line | Field injection into the ballot protocol, from an admin-supplied string |
+| F-04 | `codec.c` `bcl_decode_response` | `hash_count=`/`tally_count=` were taken off the wire by `atoi` while the row writers stop at the array bound, so the struct could announce 78 entries in a 64-entry array | The daemon (or anything answering as it) chose how far past the array its client would read |
+| F-03, F-04 | `codec.c` `body_for_each` | `body + body_len` on a bodyless message computed `NULL + 0` | Undefined behaviour on any request or response without a body |
+| F-06 | `rows.c` `block_count` | The trailer's row count accumulated with no overflow guard: `said * 10 + digit` | Signed overflow, undefined, on a reply from a wedged runner |
+
+Two of the six were in `libhtttp`, which `DESIGN.md` keeps byte-identical with
+tetriSH — **those two fixes have to be copied to that repository**, or the next
+`diff` between the trees stops being the "has this landed yet" check it exists
+to be.
+
+Two harness defects were found the same way and are worth recording, because a
+fuzz target that is wrong about the contract wastes more time than no target:
+`Content-Length` was held to a round-trip survival property the serializer
+cannot meet (it computes the header), and duplicate header keys were counted
+case-sensitively against a case-insensitive lookup. Both are documented at the
+check that makes them.
+
+### Milestones
+
+| Milestone | Cases | State |
+| --------- | ----- | ----- |
+| **Available today** - `make fuzz-regress` (the corpus and every filed crash, replayed under ASan) and `make fuzz-smoke` (60s of mutation per target) | F-01..F-10 | Running. |
+| **24-hour campaign** - `make fuzz-long`, from a warm corpus, before the final presentation | F-01..F-10 | Scheduled. Report: execs/sec, corpus size, line coverage per target, crashes found and fixed. |
+| **Transport and daemon** - `session_recv` behind a handshake fixture, and a scripted socket fuzzer against a live `ballotd` | new | Waiting on the same integration work as I-09..I-16. |
+
+---
+
 ## Timeline and milestones
 
 ### Unit tests
