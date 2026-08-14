@@ -24,10 +24,10 @@
 #include "libballotbrain/db.h"
 #include "libballotclient/codec.h"
 #include "libhtttp/htttp.h"
-#include "libtetrisauth/provision.h"
+#include "libtetrisauth/auth.h"
 #include "libtetrisdb/schema.h"
 #include "libtetrisdb/socket/conf.h"
-#include "libtetrisdb/socket/runner.h"
+#include "tetrisdb/runner.h"
 #include "libtetrissh/tetrissh.h"
 
 #define BALLOTD_BIN "bin/ballotd"

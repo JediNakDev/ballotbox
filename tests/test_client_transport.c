@@ -26,7 +26,7 @@
 #include "libballotclient/voter.h"
 #include "libtetrisdb/schema.h"
 #include "libtetrisdb/socket/conf.h"
-#include "libtetrisdb/socket/runner.h"
+#include "tetrisdb/runner.h"
 
 #define BALLOTD_BIN "bin/ballotd"
 #define TEST_PORT 17678

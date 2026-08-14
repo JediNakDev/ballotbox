@@ -17,7 +17,6 @@
 #include "libtetrisutil/logmsg.h"
 #include "libtetrisutil/rc.h"
 #include "runner.h"
-#include "tetrisd/history.h"
 
 #define STOP_WAIT_MS 10000
 
@@ -175,8 +174,7 @@ static int load_config(db_runner_opts_t *opts)
 static int provision(const db_runner_opts_t *opts)
 {
     if (db_ensure_table(opts->dir, TETRISAUTH_DB_TABLE, TETRISAUTH_DB_SCHEMA) !=
-            0 ||
-        db_ensure_table(opts->dir, HISTORY_DB_TABLE, HISTORY_DB_SCHEMA) != 0)
+        0)
     {
         report(LOG_ERROR, "could not provision database tables in %s",
                opts->dir);

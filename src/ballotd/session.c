@@ -151,13 +151,13 @@ static void session_main(int client_fd, int admin_fd, const char *cert_path,
    * anonymous" is not a state this daemon has any use for. Nothing below
    * this line may run until it returns AUTH_OK - that return is the proof
    * of authentication, not a flag anywhere on this connection. */
-  if (auth_login(&sh) != AUTH_OK) {
+  if (auth_retry_handler(&sh) != AUTH_OK) {
     session_close(&sh);
     return;
   }
 
-  char cert_name[MAX_PLAYER_NAME];
-  auth_name(cert_name, sizeof cert_name);
+  char cert_name[MAX_USER_NAME];
+  auth_get_name(cert_name, sizeof cert_name);
 
   uint8_t buf[SESSION_MAX_FRAME];
   while (true) {

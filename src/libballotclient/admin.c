@@ -1,6 +1,6 @@
 #include "libballotclient/admin.h"
 #include "libballotbrain/ballotbrain.h" /* bb_validate_config (authoritative) */
-#include "libtetrisutil/playername.h"
+#include "libtetrisutil/name.h"
 
 #include <string.h>
 
@@ -32,8 +32,8 @@ int bc_fold_eligible(char out[][BB_CERT_LEN], int *count, char *bad_entry,
   for (int i = 0; i < *count; i++) {
     char folded[BB_CERT_LEN];
     size_t len = strlen(out[i]);
-    if (!player_name_ok(out[i], len) ||
-        player_name_fold(folded, sizeof folded, out[i], len) != 0) {
+    if (!user_name_ok(out[i], len) ||
+        user_name_fold(folded, sizeof folded, out[i], len) != 0) {
       if (bad_entry != NULL)
         snprintf(bad_entry, bad_cap, "%s", out[i]);
       return -1;
