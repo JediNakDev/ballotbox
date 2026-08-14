@@ -261,6 +261,14 @@ $(BIN_DIR)/test_client_transport: tests/test_client_transport.c $(LIB_DIR)/libte
 $(BIN_DIR)/test_system_e2e: tests/test_system_e2e.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(BIN_DIR)/tetrisdb $(HEADERS)
 	$(CC) $(CFLAGS) tests/test_system_e2e.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -ltetrisutil -lssl -lcrypto -lpthread
 
+# Bottom-up integration (presentation deck's "Bottom-up integration" slide):
+# one cast-vote request, integrated one real component at a time - leaf
+# (SimpleDB adapter) -> parent (libballotbrain + store) -> transport (real
+# tetrissh + wire codec) -> top (the public ballotu client API). Needs the
+# real daemon for stages 3-4, same as test_ballotd.c/test_client_transport.c.
+$(BIN_DIR)/test_bottomup: tests/test_bottomup.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(BIN_DIR)/tetrisdb $(HEADERS)
+	$(CC) $(CFLAGS) tests/test_bottomup.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -ltetrisutil -lssl -lcrypto -lpthread
+
 # The SocketRunner inside db/dist/simpledb.jar binds its AF_UNIX socket through
 # java.net.UnixDomainSocketAddress, which only exists from JDK 16 on. The test
 # fixtures spawn the runner as a bare "java" (tests/test_tetrisdb.c and the
@@ -291,10 +299,10 @@ TEST_JAVA_DIR := $(shell \
 TEST_PATH     := $(if $(TEST_JAVA_DIR),$(TEST_JAVA_DIR):$(PATH),$(PATH))
 
 .PHONY: test
-test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd $(BIN_DIR)/test_auth $(BIN_DIR)/test_jwt $(BIN_DIR)/test_tetrisdb $(BIN_DIR)/test_ballotd $(BIN_DIR)/test_client_transport
+test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd $(BIN_DIR)/test_auth $(BIN_DIR)/test_jwt $(BIN_DIR)/test_tetrisdb $(BIN_DIR)/test_ballotd $(BIN_DIR)/test_client_transport $(BIN_DIR)/test_bottomup
 	@PATH="$(TEST_PATH)"; export PATH; \
 	fail=0; \
-	for t in $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd $(BIN_DIR)/test_tetrisdb $(BIN_DIR)/test_jwt $(BIN_DIR)/test_auth $(BIN_DIR)/test_ballotd $(BIN_DIR)/test_client_transport; do \
+	for t in $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd $(BIN_DIR)/test_tetrisdb $(BIN_DIR)/test_jwt $(BIN_DIR)/test_auth $(BIN_DIR)/test_ballotd $(BIN_DIR)/test_client_transport $(BIN_DIR)/test_bottomup; do \
 	  echo "== $$t =="; \
 	  $$t || fail=1; \
 	done; \
