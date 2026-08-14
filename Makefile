@@ -269,9 +269,39 @@ $(BIN_DIR)/test_system_e2e: tests/test_system_e2e.c $(LIB_DIR)/libtetrissh.a $(L
 $(BIN_DIR)/test_bottomup: tests/test_bottomup.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(BIN_DIR)/tetrisdb $(HEADERS)
 	$(CC) $(CFLAGS) tests/test_bottomup.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -ltetrisutil -lssl -lcrypto -lpthread
 
+# The SocketRunner inside db/dist/simpledb.jar binds its AF_UNIX socket through
+# java.net.UnixDomainSocketAddress, which only exists from JDK 16 on. The test
+# fixtures spawn the runner as a bare "java" (tests/test_tetrisdb.c and the
+# db/auth fixtures), so an older java first on PATH fails four cases with
+# "the runner exited (status 1)" and a NoClassDefFoundError buried in the
+# child's stderr - the CLI's own hint blames a too-new jar, which is backwards.
+#
+# So resolve a new-enough JDK here and put it first on PATH for the test
+# recipes only. macOS answers through java_home; a keg-only Homebrew openjdk
+# is not registered there and is not linked into PATH either, hence the second
+# lookup. Both empty (any Linux box, or a machine whose PATH java is already
+# fine) leaves PATH exactly as it was - this never overrides a working setup,
+# because the shell PATH still wins for everything outside these recipes.
+# Every candidate is asked for its own version rather than trusted: on macOS
+# `java_home -v 16+` silently answers with the newest JDK it knows when none
+# matches, and the answer here was a JDK 11 that fails exactly as before.
+# Empty result = the java already on PATH is fine (or nothing better exists),
+# and PATH is then left untouched.
+JAVA_MIN      := 16
+TEST_JAVA_DIR := $(shell \
+	ver() { "$$1" -version 2>&1 | sed -n '1s/.*version "\([0-9][0-9]*\).*/\1/p'; }; \
+	p=$$(command -v java 2>/dev/null); \
+	if [ -n "$$p" ] && [ "$$(ver "$$p")" -ge $(JAVA_MIN) ] 2>/dev/null; then exit 0; fi; \
+	for h in "$$(/usr/libexec/java_home 2>/dev/null)" "$$(brew --prefix openjdk 2>/dev/null)"; do \
+	  j="$$h/bin/java"; [ -x "$$j" ] || continue; \
+	  if [ "$$(ver "$$j")" -ge $(JAVA_MIN) ] 2>/dev/null; then echo "$$h/bin"; exit 0; fi; \
+	done)
+TEST_PATH     := $(if $(TEST_JAVA_DIR),$(TEST_JAVA_DIR):$(PATH),$(PATH))
+
 .PHONY: test
 test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd $(BIN_DIR)/test_auth $(BIN_DIR)/test_jwt $(BIN_DIR)/test_tetrisdb $(BIN_DIR)/test_ballotd $(BIN_DIR)/test_client_transport $(BIN_DIR)/test_bottomup
-	@fail=0; \
+	@PATH="$(TEST_PATH)"; export PATH; \
+	fail=0; \
 	for t in $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_logd $(BIN_DIR)/test_tetrisdb $(BIN_DIR)/test_jwt $(BIN_DIR)/test_auth $(BIN_DIR)/test_ballotd $(BIN_DIR)/test_client_transport $(BIN_DIR)/test_bottomup; do \
 	  echo "== $$t =="; \
 	  $$t || fail=1; \
@@ -281,7 +311,8 @@ test: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS)
 
 .PHONY: test-ci
 test-ci: dirs $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libballotclient.a $(TEST_BINS) $(BIN_DIR)/test_db $(BIN_DIR)/test_auth $(BIN_DIR)/test_jwt
-	@fail=0; \
+	@PATH="$(TEST_PATH)"; export PATH; \
+	fail=0; \
 	for t in $(TEST_BINS) $(BIN_DIR)/test_jwt; do \
 	  echo "== $$t =="; \
 	  $$t || fail=1; \
