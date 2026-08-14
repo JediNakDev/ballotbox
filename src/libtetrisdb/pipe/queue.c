@@ -81,6 +81,7 @@ static void execute(db_t *db, const char *sql)
                             "further statements will be dropped\n");
             pthread_mutex_lock(&db->m);
             db->dead = 1;
+            db->dropped++; /* the statement that just exhausted every retry */
             pthread_mutex_unlock(&db->m);
             return;
         }

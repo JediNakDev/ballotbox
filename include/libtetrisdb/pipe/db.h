@@ -12,6 +12,8 @@ typedef struct
     char jar[PATH_MAX];  /**< simpledb.jar for the classpath. */
     char java[PATH_MAX]; /**< java binary, resolved through PATH. */
     size_t queue_cap; /**< Pending statements before dropping; 0 = default. */
+    int timeout_ms; /**< Bounds readiness, one statement's round trip, and
+                       shutdown's reap, each freshly; 0 = default. */
 } db_opts_t;
 
 /* Spawns the PipeRunner child, waits for its startup handshake, and starts the worker thread. */

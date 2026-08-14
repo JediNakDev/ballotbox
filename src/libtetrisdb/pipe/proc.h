@@ -18,6 +18,8 @@ typedef struct
     pid_t pid;      /**< Child, or -1 when not running. */
     int in_fd;      /**< Statements are written here, to the child's stdin. */
     db_wire_t out; /**< Responses are read here, from the child's stdout. */
+    int timeout_ms; /**< Resolved at spawn from db_opts_t.timeout_ms; reused
+                       by every later exec and by close's reap. */
 } db_proc_t;
 
 /*

@@ -3,7 +3,7 @@
  * @brief The two things every runner needs before it can start.
  */
 
-#include "jvm.h"
+#include "libtetrisdb/jvm.h"
 
 #include <fcntl.h>
 #include <stdio.h>
