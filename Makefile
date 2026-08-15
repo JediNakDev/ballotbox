@@ -159,6 +159,10 @@ $(BIN_DIR)/ballotd: src/ballotd/main.c src/ballotd/dispatch.c src/ballotd/contro
 $(BIN_DIR)/ballot_session: src/ballotd/session.c $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) $(LDLIBS)
 
+# Vendored byte-for-byte from tetriSH, whose (void)config(&opts) does not
+# satisfy warn_unused_result. Relaxed here rather than in main.c, which would
+# re-diverge a file that is currently identical between the two trees.
+$(BIN_DIR)/tetrislogd: CFLAGS += -Wno-error=unused-result
 $(BIN_DIR)/tetrislogd: $(wildcard src/tetrislogd/*.c) $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 

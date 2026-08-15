@@ -55,7 +55,6 @@ static int bind_to_socket(const char *path)
             return -1;
         }
     }
-    /* Error NO ENTry */
     else if (errno != ENOENT)
     {
         fprintf(stderr, "tetrislogd: cannot stat %s: %s\n", path,
@@ -69,7 +68,6 @@ static int bind_to_socket(const char *path)
         fprintf(stderr, "tetrislogd: socket: %s\n", strerror(errno));
         return -1;
     }
-    /* close-on-exec flag: if later run exec() close this fd */
     (void)fcntl(fd, F_SETFD, FD_CLOEXEC);
 
     int bufsz = LOGD_RCVBUF;
