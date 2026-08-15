@@ -1,21 +1,7 @@
-/**
- * @file socket/runner.c
- * @brief Putting a SocketRunner where socket.c expects to find one.
- *
- * The contract, and the mechanics/policy line it draws, are in
- * include/libtetrisdb/socket/runner.h.
- *
- * It lives beside socket.c rather than at the top level because it is entirely
- * about the socket transport: the pipe path's runner is a child this library
- * owns for a daemon's lifetime (pipe/proc.c), while this one is a process that
- * outlives whoever started it and is reached by address afterwards. What the
- * two genuinely share - is there a jar, does java run - is in jvm.c, one level
- * up, which is the sharing ADR 0001 asked for.
- */
-
-#include "libtetrisdb/socket/runner.h"
-#include "../jvm.h"
+#include "runner.h"
+#include "libtetrisdb/jvm.h"
 #include "libtetrisdb/schema.h"
+#include "libtetrisdb/socket/conf.h"
 
 #include <errno.h>
 #include <fcntl.h>

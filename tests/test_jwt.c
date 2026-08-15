@@ -1,36 +1,39 @@
-/* Tests for the JWT layer (#46, #53, #54).
+/* Tests for the token layer (#46, #53, #54).
  *
- * Needs no runner, no socket and no skip path: jwt.c takes its secret as
+ * Needs no runner, no socket and no skip path: token.c takes its secret as
  * (pointer, length) and its clock as an explicit time_t, which was chosen for
  * exactly this.
  *
  * THIS TARGET IS ALSO AN ARCHITECTURAL ASSERTION. It compiles against
- * src/libtetrisauth/jwt.c and links -lcrypto only, so an
+ * src/libtetrisauth/lib/token.c and links -lcrypto only, so an
  * #include "libtetrissh/..." in it stops it linking. The portability claim
  * that file rests on is a build failure rather than a review comment.
  *
- * Every case here is black box through jwt_mint() and jwt_verify(), including
- * the base64url and JSON ones. Both are reachable directly now that they are
- * their own files, and these stay at the boundary on purpose: a helper that is
- * correct in isolation and wired up wrong is the failure this suite has to
- * catch. The padding residues are
- * covered by walking #47's 1..15 character name range, which moves the payload
- * length through every residue mod 3; '-' and '_' in the output are pinned by
- * the known-answer vector, whose signature segment contains both.
+ * Every case here is black box through token_mint() and token_verify().
  *
- * The tokens that must not be mintable - a `none` alg, a third header
- * parameter, a reordered payload - are built here by build_signed(), which
- * base64url-encodes and HMACs whatever JSON it is handed. Without it the
- * important cases would die at the MAC check and stop testing what they were
- * written to test.
+ * WHAT THIS SUITE LOST WHEN THE FORMAT STOPPED BEING A JWT. The cases for
+ * alg:none, for other algs, and for a third header parameter are gone, and
+ * they are not coming back: the format carries no header and names no
+ * algorithm, so there is no downgrade to attempt and nothing to assert. The
+ * base64url padding and alphabet cases went with the encoding. Their loss is
+ * the point of the change rather than a gap in it - but a reader comparing
+ * this file against its history should see the deletions accounted for here
+ * and not assume coverage was quietly dropped.
+ *
+ * WHAT REPLACED THEM. The old format ignored claims it did not understand,
+ * per RFC 7519 s4; this one has a fixed field count, so a sixth field is a
+ * rejection - see test_extra_field_rejected(). And where key order used to be
+ * the way to restate the same claims, a field swap is - see
+ * test_swapped_fields_fail().
  *
  * Run from the repo root: make test */
 #include <stdio.h>
+#include "test_output.h"
 #include <string.h>
 
 #include <openssl/hmac.h>
 
-#include "libtetrisauth/jwt.h"
+#include "auth.h"
 
 /* The secret every case signs and verifies under: 32 bytes, the RFC 7518 3.2
  * minimum. Fixed rather than random, because the known-answer vector below
@@ -50,540 +53,584 @@ static const unsigned char *secret = (const unsigned char *)SECRET;
 static int tests_run = 0, tests_failed = 0;
 
 #define CHECK(cond, msg)                                                       \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      fprintf(stderr, "    FAIL: %s (%s:%d)\n", msg, __FILE__, __LINE__);      \
-      return -1;                                                               \
-    }                                                                          \
-  } while (0)
+    do                                                                         \
+    {                                                                          \
+        if (!(cond))                                                           \
+        {                                                                      \
+            test_output_failure_detail(msg, __FILE__, __LINE__);               \
+            return -1;                                                         \
+        }                                                                      \
+    } while (0)
 
-static void run(const char *name, int (*fn)(void)) {
-  printf("  %s\n", name);
-  tests_run++;
-  if (fn() != 0)
-    tests_failed++;
+static void run(const char *name, int (*fn)(void))
+{
+    tests_run++;
+    if (fn() != 0)
+    {
+        tests_failed++;
+        test_output_fail(name);
+    }
+    else
+        test_output_pass(name);
 }
 
-/* === Building tokens jwt_mint() would refuse to produce === */
+/* === Building tokens token_mint() would refuse to produce === */
 
-/* The base64url alphabet again, on this side of the boundary. */
-static const char B64[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-/* Bytes to unpadded base64url, for building token segments by hand.
+/*
+ * Sign whatever claim text it is handed and append the MAC, producing a token
+ * that is valid in every way except for whatever the caller made wrong.
  *
- * Deliberately a second, independent implementation rather than a call into
- * b64url.c: if this one and the library's ever disagree, the known-answer
- * vector is the third opinion that says which is wrong. */
-static size_t t_b64(char *out, const void *vin, size_t n) {
-  const unsigned char *in = vin;
-  size_t o = 0, i = 0;
-  for (; i + 3 <= n; i += 3) {
-    unsigned v = (unsigned)in[i] << 16 | (unsigned)in[i + 1] << 8 | in[i + 2];
-    out[o++] = B64[v >> 18 & 63];
-    out[o++] = B64[v >> 12 & 63];
-    out[o++] = B64[v >> 6 & 63];
-    out[o++] = B64[v & 63];
-  }
-  if (n - i > 0) {
-    unsigned v = (unsigned)in[i] << 16;
-    if (n - i == 2)
-      v |= (unsigned)in[i + 1] << 8;
-    out[o++] = B64[v >> 18 & 63];
-    out[o++] = B64[v >> 12 & 63];
-    if (n - i == 2)
-      out[o++] = B64[v >> 6 & 63];
-  }
-  out[o] = '\0';
-  return o;
-}
-
-/* Build a fully valid token out of whatever header and payload JSON it is
- * handed: encode both as the first two segments, then append the HMAC of those
- * bytes under sec.
+ * This is what lets the field-shape cases reach the code they were written
+ * for. Without it they would die at the MAC check, pass, and test nothing.
  *
- * This is what lets the alg and header-strictness cases reach the code they
- * were written for. Without it they would die at the MAC check, pass, and test
- * nothing. */
-static void build_signed(char *out, const char *hdr, const char *pay,
-                         const unsigned char *sec, size_t sec_len) {
-  size_t n = t_b64(out, hdr, strlen(hdr));
-  out[n++] = '.';
-  n += t_b64(out + n, pay, strlen(pay));
+ * Deliberately a second, independent hex encoder rather than a call into
+ * token.c: if this one and the library's ever disagree, the known-answer
+ * vector is the third opinion that says which is wrong.
+ */
+static void build_signed(char *out, const char *claims,
+                         const unsigned char *sec, size_t sec_len)
+{
+    static const char DIGITS[] = "0123456789abcdef";
+    size_t n = strlen(claims);
+    unsigned char mac[32];
+    unsigned int mac_len = 0;
 
-  unsigned char mac[32];
-  unsigned int mac_len = 0;
-  HMAC(EVP_sha256(), sec, (int)sec_len, (const unsigned char *)out, n, mac,
-       &mac_len);
+    memcpy(out, claims, n);
+    HMAC(EVP_sha256(), sec, (int)sec_len, (const unsigned char *)claims, n, mac,
+         &mac_len);
 
-  out[n++] = '.';
-  t_b64(out + n, mac, sizeof mac);
+    for (size_t i = 0; i < sizeof mac; i++)
+    {
+        out[n + i * 2] = DIGITS[mac[i] >> 4];
+        out[n + i * 2 + 1] = DIGITS[mac[i] & 0x0f];
+    }
+    out[n + sizeof mac * 2] = '\0';
 }
 
-/* Same, but with the signature segment supplied verbatim, so one token's
- * signature can be pasted onto another token's bytes. Only the reordered-keys
- * case needs this. */
-static void build_with_sig(char *out, const char *hdr, const char *pay,
-                           const char *sig_seg) {
-  size_t n = t_b64(out, hdr, strlen(hdr));
-  out[n++] = '.';
-  n += t_b64(out + n, pay, strlen(pay));
-  out[n++] = '.';
-  strcpy(out + n, sig_seg);
+/* Same, but with the MAC field supplied verbatim, so one token's signature can
+ * be pasted onto another token's claims. */
+static void build_with_sig(char *out, const char *claims, const char *sig)
+{
+    strcpy(out, claims);
+    strcat(out, sig);
 }
 
-/* Locate segment 0, 1 or 2 of a token: returns a pointer to its first
- * character and writes its length. */
-static const char *segment(const char *token, int which, size_t *len) {
-  const char *p = token;
-  for (int i = 0; i < which; i++)
-    p = strchr(p, '.') + 1;
-  const char *dot = strchr(p, '.');
-  *len = dot != NULL ? (size_t)(dot - p) : strlen(p);
-  return p;
+/* Locate field 0..4 of a token: returns a pointer to its first character and
+ * writes its length. */
+static const char *field(const char *token, int which, size_t *len)
+{
+    const char *p = token;
+    for (int i = 0; i < which; i++)
+        p = strchr(p, '\n') + 1;
+    const char *sep = strchr(p, '\n');
+    *len = sep != NULL ? (size_t)(sep - p) : strlen(p);
+    return p;
 }
 
-/* Corrupt one character in the middle of a segment, replacing it with a
- * different ALPHABET character so the token stays well-formed base64url and
- * only the bytes it encodes change. That is what makes the expected answer
- * JWT_E_SIGNATURE rather than JWT_E_MALFORMED. */
-static void flip_in_segment(char *token, int which) {
-  size_t len;
-  char *p = (char *)segment(token, which, &len);
-  size_t at = len / 2;
-  p[at] = p[at] == 'A' ? 'B' : 'A';
+/*
+ * Corrupt one character in the middle of a field, replacing it with a
+ * different character OF THE SAME CLASS so the token stays structurally
+ * well-formed and only the bytes the MAC covers change. That is what makes the
+ * expected answer TOKEN_E_SIGNATURE rather than TOKEN_E_MALFORMED.
+ */
+static void flip_in_field(char *token, int which)
+{
+    size_t len;
+    char *p = (char *)field(token, which, &len);
+    size_t at = len / 2;
+    if (p[at] >= '0' && p[at] <= '9')
+        p[at] = p[at] == '0' ? '1' : '0';
+    else
+        p[at] = p[at] == 'a' ? 'b' : 'a';
 }
 
-/* The exact header and payload jwt_mint() emits for the claims below, spelled
- * out so build_signed() can produce near-misses of them. */
-static const char CANONICAL_HEADER[] = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
-static const char CANONICAL_PAYLOAD[] =
-    "{\"sub\":42,\"name\":\"alice\",\"iat\":1700000000,\"exp\":1700003600}";
-
-/* The one good token the tampering cases start from. */
-static int mint_canonical(char *tok) {
-  jwt_claims_t c = {0};
-  c.sub = 42;
-  strcpy(c.name, "alice");
-  c.iat = IAT;
-  c.exp = EXP;
-  return jwt_mint(tok, JWT_MAX_LEN, &c, secret, SECRET_LEN);
+/* The one good token the tampering cases start from. The claim text it
+ * produces is spelled out in test_known_answer(), and the near-miss cases
+ * spell their own. */
+static int mint_canonical(char *tok)
+{
+    token_claims_t c = {0};
+    c.sub = 42;
+    strcpy(c.name, "alice");
+    c.iat = IAT;
+    c.exp = EXP;
+    return token_mint(tok, TOKEN_MAX_LEN, &c, secret, SECRET_LEN);
 }
 
 /* === Round trip and encoding === */
 
 /* Mint a token, verify it, and check all four claims come back unchanged. */
-static int test_round_trip(void) {
-  char tok[JWT_MAX_LEN];
-  CHECK(mint_canonical(tok) == 0, "mint failed");
+static int test_round_trip(void)
+{
+    char tok[TOKEN_MAX_LEN];
+    CHECK(mint_canonical(tok) == 0, "mint failed");
 
-  jwt_claims_t got;
-  CHECK(jwt_verify(tok, secret, SECRET_LEN, NOW, &got) == JWT_OK,
-        "verify rejected our own token");
-  CHECK(got.sub == 42, "sub did not survive");
-  CHECK(strcmp(got.name, "alice") == 0, "name did not survive");
-  CHECK(got.iat == IAT, "iat did not survive");
-  CHECK(got.exp == EXP, "exp did not survive");
-  return 0;
+    token_claims_t got;
+    CHECK(token_verify(tok, secret, SECRET_LEN, NOW, &got) == TOKEN_OK,
+          "verify rejected our own token");
+    CHECK(got.sub == 42, "sub did not survive");
+    CHECK(strcmp(got.name, "alice") == 0, "name did not survive");
+    CHECK(got.iat == IAT, "iat did not survive");
+    CHECK(got.exp == EXP, "exp did not survive");
+    return 0;
 }
 
 /*
  * One hardcoded secret/claims/expected-token vector, computed outside this
- * tree, so a refactor that silently changes the encoding fails loudly. Its
- * signature segment contains both '-' and '_', which is the only place the
- * two base64url-specific characters are pinned.
+ * tree with `openssl dgst -sha256 -mac HMAC`, so a refactor that silently
+ * changes the format or the signed input fails loudly. The claim text is
+ * spelled out character by character because the separators and their exact
+ * placement are the format.
  */
-static int test_known_answer(void) {
-  static const char EXPECTED[] =
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-      "eyJzdWIiOjQyLCJuYW1lIjoiYWxpY2UiLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAw"
-      "MzYwMH0."
-      "MBM2Wa0pNdy0aWHWYuNacf8Jw-n1Gcfl1uuYAN_icQI";
+static int test_known_answer(void)
+{
+    static const char EXPECTED[] =
+        "42\nalice\n1700000000\n1700003600\n"
+        "4431a86c4ffd6a7419156456e1b9c23abbbc752d9955e0d34f13e15d89ddc008";
 
-  char tok[JWT_MAX_LEN];
-  CHECK(mint_canonical(tok) == 0, "mint failed");
-  CHECK(strcmp(tok, EXPECTED) == 0, "minted token differs from the vector");
-  CHECK(strchr(tok, '-') != NULL && strchr(tok, '_') != NULL,
-        "vector no longer exercises the base64url alphabet");
-  return 0;
+    char tok[TOKEN_MAX_LEN];
+    CHECK(mint_canonical(tok) == 0, "mint failed");
+    CHECK(strcmp(tok, EXPECTED) == 0, "minted token differs from the vector");
+    return 0;
 }
 
-/* Names of 1 to 15 characters, which is #47's whole range. It walks the
- * payload length through every residue mod 3, and so through every base64url
- * tail length - the padding cases, reached from outside. */
-static int test_every_name_length_round_trips(void) {
-  for (size_t n = 1; n <= 15; n++) {
-    jwt_claims_t c = {0};
-    c.sub = 7;
-    memset(c.name, 'a', n);
-    c.name[n] = '\0';
-    c.iat = IAT;
-    c.exp = EXP;
+/* The MAC is lowercase hex and nothing else. Pinned separately from the vector
+ * because the vector would still pass if only its own digits happened to
+ * agree. */
+static int test_mac_is_lowercase_hex(void)
+{
+    char tok[TOKEN_MAX_LEN];
+    CHECK(mint_canonical(tok) == 0, "mint failed");
 
-    char tok[JWT_MAX_LEN];
-    CHECK(jwt_mint(tok, sizeof tok, &c, secret, SECRET_LEN) == 0,
-          "mint failed for some name length");
+    size_t len;
+    const char *sig = field(tok, 4, &len);
+    CHECK(len == TOKEN_SIG_HEX_LEN, "the MAC field is not 64 characters");
+    for (size_t i = 0; i < len; i++)
+        CHECK((sig[i] >= '0' && sig[i] <= '9') ||
+                  (sig[i] >= 'a' && sig[i] <= 'f'),
+              "the MAC field contains something that is not lowercase hex");
+    return 0;
+}
 
-    jwt_claims_t got;
-    CHECK(jwt_verify(tok, secret, SECRET_LEN, NOW, &got) == JWT_OK,
-          "verify failed for some name length");
-    CHECK(strcmp(got.name, c.name) == 0, "name did not survive a length");
-  }
-  return 0;
+/* Names of 1 to 15 characters, which is #47's whole range. */
+static int test_every_name_length_round_trips(void)
+{
+    for (size_t n = 1; n <= TOKEN_NAME_MAX; n++)
+    {
+        token_claims_t c = {0};
+        c.sub = 7;
+        memset(c.name, 'a', n);
+        c.name[n] = '\0';
+        c.iat = IAT;
+        c.exp = EXP;
+
+        char tok[TOKEN_MAX_LEN];
+        CHECK(token_mint(tok, sizeof tok, &c, secret, SECRET_LEN) == 0,
+              "mint failed for some name length");
+
+        token_claims_t got;
+        CHECK(token_verify(tok, secret, SECRET_LEN, NOW, &got) == TOKEN_OK,
+              "verify failed for some name length");
+        CHECK(strcmp(got.name, c.name) == 0, "name did not survive a length");
+    }
+    return 0;
+}
+
+/* The widest claims #47 and a long long allow must still fit TOKEN_MAX_LEN.
+ * The header claims 143 bytes worst case; this is the case that would catch
+ * that arithmetic being wrong. */
+static int test_widest_claims_still_fit(void)
+{
+    token_claims_t c = {0};
+    c.sub = -9223372036854775807LL - 1;
+    memset(c.name, 'a', TOKEN_NAME_MAX);
+    c.name[TOKEN_NAME_MAX] = '\0';
+    c.iat = -9223372036854775807LL - 1;
+    c.exp = 9223372036854775807LL;
+
+    char tok[TOKEN_MAX_LEN];
+    CHECK(token_mint(tok, sizeof tok, &c, secret, SECRET_LEN) == 0,
+          "the widest possible claims did not fit");
+
+    /* LLONG_MIN does not round trip - parse_ll() rejects it as overflow - so
+     * this asserts the mint side only, which is what the bound is about. */
+    CHECK(strlen(tok) < TOKEN_MAX_LEN, "the widest token overran its bound");
+    return 0;
 }
 
 /* === Tampering === */
 
-/* One character changed in the header, then the payload, then the signature.
- * All three must come back JWT_E_SIGNATURE. */
-static int test_flipped_byte_in_each_segment(void) {
-  for (int seg = 0; seg < 3; seg++) {
-    char tok[JWT_MAX_LEN];
-    CHECK(mint_canonical(tok) == 0, "mint failed");
-    flip_in_segment(tok, seg);
+/* One character changed in each of the five fields in turn. All five must come
+ * back TOKEN_E_SIGNATURE. */
+static int test_flipped_byte_in_each_field(void)
+{
+    for (int f = 0; f < 5; f++)
+    {
+        char tok[TOKEN_MAX_LEN];
+        CHECK(mint_canonical(tok) == 0, "mint failed");
+        flip_in_field(tok, f);
 
-    jwt_claims_t got;
-    /* The exact code matters: if a flipped signature came back malformed the
-     * case would pass without ever reaching the MAC compare. */
-    CHECK(jwt_verify(tok, secret, SECRET_LEN, NOW, &got) == JWT_E_SIGNATURE,
-          "a flipped byte was not reported as a signature failure");
-  }
-  return 0;
+        token_claims_t got;
+        /* The exact code matters: if a flipped MAC came back malformed the
+         * case would pass without ever reaching the compare. */
+        CHECK(token_verify(tok, secret, SECRET_LEN, NOW, &got) ==
+                  TOKEN_E_SIGNATURE,
+              "a flipped byte was not reported as a signature failure");
+    }
+    return 0;
 }
 
 /* A good token presented under a different key. */
-static int test_wrong_secret(void) {
-  char tok[JWT_MAX_LEN];
-  CHECK(mint_canonical(tok) == 0, "mint failed");
+static int test_wrong_secret(void)
+{
+    char tok[TOKEN_MAX_LEN];
+    CHECK(mint_canonical(tok) == 0, "mint failed");
 
-  const unsigned char other[] = "0123456789abcdef0123456789abcdeF";
-  jwt_claims_t got;
-  CHECK(jwt_verify(tok, other, sizeof other - 1, NOW, &got) == JWT_E_SIGNATURE,
-        "a token verified under the wrong secret");
-  return 0;
-}
-
-/* A signature segment one character short, so it decodes to 31 bytes and must
- * be refused on length before any comparison happens. */
-static int test_signature_of_the_wrong_length(void) {
-  char tok[JWT_MAX_LEN];
-  CHECK(mint_canonical(tok) == 0, "mint failed");
-  tok[strlen(tok) - 1] = '\0'; /* 42 characters decode to 31 bytes */
-
-  jwt_claims_t got;
-  CHECK(jwt_verify(tok, secret, SECRET_LEN, NOW, &got) == JWT_E_SIGNATURE,
-        "a short signature was not rejected on length");
-  return 0;
-}
-
-/* Tokens that are not three non-empty segments of base64url: empty, two
- * segments, four segments, an empty first segment, and a '+' (base64 but not
- * base64url). */
-static int test_malformed_shapes(void) {
-  jwt_claims_t got;
-  char tok[JWT_MAX_LEN];
-
-  CHECK(jwt_verify("", secret, SECRET_LEN, NOW, &got) == JWT_E_MALFORMED,
-        "empty token accepted");
-  CHECK(jwt_verify("a.b", secret, SECRET_LEN, NOW, &got) == JWT_E_MALFORMED,
-        "two segments accepted");
-  CHECK(jwt_verify("a.b.c.d", secret, SECRET_LEN, NOW, &got) == JWT_E_MALFORMED,
-        "four segments accepted");
-  CHECK(jwt_verify(".b.c", secret, SECRET_LEN, NOW, &got) == JWT_E_MALFORMED,
-        "empty first segment accepted");
-
-  /* '+' is base64 but not base64url, and it sits in the signature segment
-   * whose decode runs before the compare. */
-  CHECK(mint_canonical(tok) == 0, "mint failed");
-  size_t len;
-  char *sig = (char *)segment(tok, 2, &len);
-  sig[len / 2] = '+';
-  CHECK(jwt_verify(tok, secret, SECRET_LEN, NOW, &got) == JWT_E_MALFORMED,
-        "'+' accepted in a base64url segment");
-  return 0;
-}
-
-/* === alg === */
-
-/*
- * The single most important case in this file: a `none` token carrying a
- * genuinely valid HS256 signature over the none header. Built rather than
- * hand-written, so it dies at the alg compare and not at the MAC check.
- */
-static int test_alg_none_with_a_valid_signature(void) {
-  char tok[JWT_MAX_LEN];
-  build_signed(tok, "{\"alg\":\"none\",\"typ\":\"JWT\"}", CANONICAL_PAYLOAD,
-               secret, SECRET_LEN);
-
-  jwt_claims_t got;
-  CHECK(jwt_verify(tok, secret, SECRET_LEN, NOW, &got) == JWT_E_ALG,
-        "an alg:none token with a valid MAC was not rejected on alg");
-  return 0;
-}
-
-/* A properly signed HS512 header, and a header carrying no alg at all. */
-static int test_other_algs_rejected(void) {
-  char tok[JWT_MAX_LEN];
-  jwt_claims_t got;
-
-  build_signed(tok, "{\"alg\":\"HS512\",\"typ\":\"JWT\"}", CANONICAL_PAYLOAD,
-               secret, SECRET_LEN);
-  CHECK(jwt_verify(tok, secret, SECRET_LEN, NOW, &got) == JWT_E_ALG,
-        "HS512 accepted");
-
-  build_signed(tok, "{\"typ\":\"JWT\"}", CANONICAL_PAYLOAD, secret, SECRET_LEN);
-  CHECK(jwt_verify(tok, secret, SECRET_LEN, NOW, &got) == JWT_E_ALG,
-        "a header with no alg accepted");
-  return 0;
+    const unsigned char other[] = "0123456789abcdef0123456789abcdeF";
+    token_claims_t got;
+    CHECK(token_verify(tok, other, sizeof other - 1, NOW, &got) ==
+              TOKEN_E_SIGNATURE,
+          "a token verified under the wrong secret");
+    return 0;
 }
 
 /*
- * The two halves of the RFC-mandated asymmetry, one case each, because either
- * one alone reads as a bug: unknown header parameters MUST be rejected (7519
- * 7.2 step 5) and unknown claims MUST be ignored (7519 4).
+ * A MAC field that is not exactly 64 characters, short and long.
+ *
+ * NOTE THE CODE CHANGED HERE. Under the old format a short signature decoded
+ * to 31 bytes and was refused on length by the signature check, so it came
+ * back E_SIGNATURE. The width is now a structural property of the field, so it
+ * is caught by the split and comes back E_MALFORMED. Nothing is weaker - the
+ * rejection simply moved earlier.
  */
-/* A third header parameter (kid) alongside alg and typ, properly signed. */
-static int test_third_header_parameter_rejected(void) {
-  char tok[JWT_MAX_LEN];
-  build_signed(tok, "{\"alg\":\"HS256\",\"typ\":\"JWT\",\"kid\":\"k1\"}",
-               CANONICAL_PAYLOAD, secret, SECRET_LEN);
+static int test_signature_of_the_wrong_length(void)
+{
+    char tok[TOKEN_MAX_LEN];
+    token_claims_t got;
 
-  jwt_claims_t got;
-  CHECK(jwt_verify(tok, secret, SECRET_LEN, NOW, &got) == JWT_E_ALG,
-        "an unknown header parameter was accepted");
-  return 0;
+    CHECK(mint_canonical(tok) == 0, "mint failed");
+    tok[strlen(tok) - 1] = '\0';
+    CHECK(token_verify(tok, secret, SECRET_LEN, NOW, &got) == TOKEN_E_MALFORMED,
+          "a short MAC was not rejected on width");
+
+    CHECK(mint_canonical(tok) == 0, "mint failed");
+    strcat(tok, "0");
+    CHECK(token_verify(tok, secret, SECRET_LEN, NOW, &got) == TOKEN_E_MALFORMED,
+          "a long MAC was not rejected on width");
+    return 0;
 }
 
-/* A fifth claim in the payload, properly signed: it must verify, and the four
- * known claims must still read correctly. */
-static int test_fifth_claim_ignored(void) {
-  char tok[JWT_MAX_LEN];
-  build_signed(tok, CANONICAL_HEADER,
-               "{\"sub\":42,\"name\":\"alice\",\"iat\":1700000000,"
-               "\"exp\":1700003600,\"role\":\"admin\"}",
-               secret, SECRET_LEN);
+/*
+ * A MAC of the right width carrying characters that are not hex.
+ *
+ * This is E_SIGNATURE rather than E_MALFORMED on purpose: verification
+ * compares the hex text instead of decoding it, so there is no decoder to
+ * reject the character and a non-hex MAC is simply a MAC that does not match.
+ * The case exists to pin that choice, which is also what makes an
+ * uppercase-hex spelling of a correct MAC fail.
+ */
+static int test_non_canonical_mac_spellings(void)
+{
+    char tok[TOKEN_MAX_LEN];
+    token_claims_t got;
+    size_t len;
 
-  jwt_claims_t got;
-  CHECK(jwt_verify(tok, secret, SECRET_LEN, NOW, &got) == JWT_OK,
-        "an unknown claim was not ignored");
-  CHECK(got.sub == 42 && strcmp(got.name, "alice") == 0,
-        "the known claims were misread");
-  return 0;
+    CHECK(mint_canonical(tok) == 0, "mint failed");
+    ((char *)field(tok, 4, &len))[0] = 'z';
+    CHECK(token_verify(tok, secret, SECRET_LEN, NOW, &got) ==
+              TOKEN_E_SIGNATURE,
+          "a non-hex MAC character was not a mismatch");
+
+    /* The same MAC, correct in value, spelled in uppercase. */
+    CHECK(mint_canonical(tok) == 0, "mint failed");
+    char *sig = (char *)field(tok, 4, &len);
+    for (size_t i = 0; i < len; i++)
+        if (sig[i] >= 'a' && sig[i] <= 'f')
+            sig[i] = (char)(sig[i] - 'a' + 'A');
+    CHECK(token_verify(tok, secret, SECRET_LEN, NOW, &got) ==
+              TOKEN_E_SIGNATURE,
+          "an uppercase spelling of a correct MAC verified");
+    return 0;
+}
+
+/* Tokens that are not five fields: empty, too few, too many, and a separator
+ * inside the MAC field. */
+static int test_malformed_shapes(void)
+{
+    token_claims_t got;
+
+    CHECK(token_verify("", secret, SECRET_LEN, NOW, &got) == TOKEN_E_MALFORMED,
+          "empty token accepted");
+    CHECK(token_verify("42\nalice\n1\n2", secret, SECRET_LEN, NOW, &got) ==
+              TOKEN_E_MALFORMED,
+          "four fields accepted");
+
+    /* Six fields, correctly signed over the first five, so this dies on the
+     * field count rather than on the MAC. */
+    char tok[TOKEN_MAX_LEN];
+    build_signed(tok, "42\nalice\n1700000000\n1700003600\nextra\n", secret,
+                 SECRET_LEN);
+    CHECK(token_verify(tok, secret, SECRET_LEN, NOW, &got) == TOKEN_E_MALFORMED,
+          "six fields accepted");
+
+    /* A separator inside the MAC field, which is the same rejection reached by
+     * a different route. */
+    CHECK(mint_canonical(tok) == 0, "mint failed");
+    size_t len;
+    ((char *)field(tok, 4, &len))[len / 2] = '\n';
+    CHECK(token_verify(tok, secret, SECRET_LEN, NOW, &got) == TOKEN_E_MALFORMED,
+          "a separator inside the MAC field was accepted");
+    return 0;
+}
+
+/*
+ * A sixth field, properly signed, must be REJECTED.
+ *
+ * This is the deliberate reversal of the old format's behaviour: RFC 7519 s4
+ * required unknown claims to be ignored, and the suite had a case asserting a
+ * fifth claim verified. The field count is fixed now, so extra data is a
+ * rejection - the strictly safer answer, and one this format can afford
+ * because it has no interoperability obligation.
+ */
+static int test_extra_field_rejected(void)
+{
+    char tok[TOKEN_MAX_LEN];
+    build_signed(tok, "42\nalice\n1700000000\n1700003600\nadmin\n", secret,
+                 SECRET_LEN);
+
+    token_claims_t got;
+    CHECK(token_verify(tok, secret, SECRET_LEN, NOW, &got) == TOKEN_E_MALFORMED,
+          "an extra field was accepted");
+    return 0;
 }
 
 /* === Claims === */
 
 /* The three points around exp: one second before passes, now == exp fails,
  * one second after fails. */
-static int test_expiry_boundary(void) {
-  char tok[JWT_MAX_LEN];
-  CHECK(mint_canonical(tok) == 0, "mint failed");
+static int test_expiry_boundary(void)
+{
+    char tok[TOKEN_MAX_LEN];
+    CHECK(mint_canonical(tok) == 0, "mint failed");
 
-  jwt_claims_t got;
-  CHECK(jwt_verify(tok, secret, SECRET_LEN, (time_t)(EXP - 1), &got) == JWT_OK,
-        "one second before exp was rejected");
-  /* Leeway is zero and 4.1.4's wording is "on or after", so this is the edge
-   * that must not drift. */
-  CHECK(jwt_verify(tok, secret, SECRET_LEN, (time_t)EXP, &got) == JWT_E_EXPIRED,
-        "now == exp was accepted");
-  CHECK(jwt_verify(tok, secret, SECRET_LEN, (time_t)(EXP + 1), &got) ==
-            JWT_E_EXPIRED,
-        "an expired token was accepted");
-  return 0;
+    token_claims_t got;
+    CHECK(token_verify(tok, secret, SECRET_LEN, (time_t)(EXP - 1), &got) ==
+              TOKEN_OK,
+          "one second before exp was rejected");
+    /* Leeway is zero and the kept wording is "on or after", so this is the
+     * edge that must not drift. */
+    CHECK(token_verify(tok, secret, SECRET_LEN, (time_t)EXP, &got) ==
+              TOKEN_E_EXPIRED,
+          "now == exp was accepted");
+    CHECK(token_verify(tok, secret, SECRET_LEN, (time_t)(EXP + 1), &got) ==
+              TOKEN_E_EXPIRED,
+          "an expired token was accepted");
+    return 0;
 }
 
-/* A properly signed token with no exp claim at all. */
-static int test_missing_exp_is_not_eternal(void) {
-  char tok[JWT_MAX_LEN];
-  build_signed(tok, CANONICAL_HEADER,
-               "{\"sub\":42,\"name\":\"alice\",\"iat\":1700000000}", secret,
-               SECRET_LEN);
+/* A properly signed token with no exp field. Under the old format this was a
+ * missing optional claim and had to be caught by a rule; here it is one field
+ * short and cannot be spelled at all. The case is kept because the property it
+ * protects - no token is eternal - is the same. */
+static int test_missing_exp_is_not_eternal(void)
+{
+    char tok[TOKEN_MAX_LEN];
+    build_signed(tok, "42\nalice\n1700000000\n", secret, SECRET_LEN);
 
-  jwt_claims_t got;
-  CHECK(jwt_verify(tok, secret, SECRET_LEN, NOW, &got) == JWT_E_CLAIMS,
-        "a token with no exp was accepted");
-  return 0;
+    token_claims_t got;
+    CHECK(token_verify(tok, secret, SECRET_LEN, NOW, &got) == TOKEN_E_MALFORMED,
+          "a token with no exp was accepted");
+    return 0;
 }
 
 /*
- * The regression guard for someone restructuring jwt_verify(): the signature
- * covers the received bytes, so the same claims re-serialized in another key
- * order must fail. This passes on day one - #53's shape makes it structurally
- * unavailable rather than merely avoided.
+ * The regression guard for someone restructuring token_verify(): the signature
+ * covers the received bytes, so the same values in different positions must
+ * fail. iat and exp are swapped here, which is the nearest thing this format
+ * has to the old reordered-keys case.
  */
-static int test_reordered_payload_fails(void) {
-  char tok[JWT_MAX_LEN];
-  CHECK(mint_canonical(tok) == 0, "mint failed");
+static int test_swapped_fields_fail(void)
+{
+    char tok[TOKEN_MAX_LEN];
+    CHECK(mint_canonical(tok) == 0, "mint failed");
 
-  size_t len;
-  const char *sig = segment(tok, 2, &len);
-  char sig_seg[64];
-  memcpy(sig_seg, sig, len);
-  sig_seg[len] = '\0';
+    size_t len;
+    const char *sig = field(tok, 4, &len);
+    char sig_field[TOKEN_SIG_HEX_LEN + 1];
+    memcpy(sig_field, sig, len);
+    sig_field[len] = '\0';
 
-  char reordered[JWT_MAX_LEN];
-  build_with_sig(reordered, CANONICAL_HEADER,
-                 "{\"name\":\"alice\",\"sub\":42,\"exp\":1700003600,"
-                 "\"iat\":1700000000}",
-                 sig_seg);
+    char swapped[TOKEN_MAX_LEN];
+    build_with_sig(swapped, "42\nalice\n1700003600\n1700000000\n", sig_field);
 
-  jwt_claims_t got;
-  CHECK(jwt_verify(reordered, secret, SECRET_LEN, NOW, &got) == JWT_E_SIGNATURE,
-        "a re-serialized payload verified under the original signature");
-  return 0;
+    token_claims_t got;
+    CHECK(token_verify(swapped, secret, SECRET_LEN, NOW, &got) ==
+              TOKEN_E_SIGNATURE,
+          "reordered claim values verified under the original signature");
+    return 0;
 }
 
-/* Payloads that are signed correctly and still wrong: a duplicate claim, a
- * nested value, exp as a string, exp as 1.5, an escaped name, a 16 character
- * name, and a missing sub. */
-static int test_bad_payload_shapes(void) {
-  struct {
-    const char *pay;
-    jwt_result_t want;
-    const char *msg;
-  } cases[] = {
-      {"{\"sub\":42,\"sub\":7,\"name\":\"alice\",\"iat\":1700000000,"
-       "\"exp\":1700003600}",
-       JWT_E_MALFORMED, "a duplicate claim was accepted"},
-      {"{\"sub\":{\"a\":1},\"name\":\"alice\",\"iat\":1700000000,"
-       "\"exp\":1700003600}",
-       JWT_E_MALFORMED, "a nested value was accepted"},
-      {"{\"sub\":42,\"name\":\"alice\",\"iat\":1700000000,"
-       "\"exp\":\"1700003600\"}",
-       JWT_E_CLAIMS, "exp as a string was accepted"},
-      {"{\"sub\":42,\"name\":\"alice\",\"iat\":1700000000,\"exp\":1.5}",
-       JWT_E_CLAIMS, "a non-integer exp was accepted"},
-      {"{\"sub\":42,\"name\":\"\\u0061lice\",\"iat\":1700000000,"
-       "\"exp\":1700003600}",
-       JWT_E_CLAIMS, "an escaped name was decoded rather than rejected"},
-      {"{\"sub\":42,\"name\":\"abcdefghijklmnop\",\"iat\":1700000000,"
-       "\"exp\":1700003600}",
-       JWT_E_CLAIMS, "a 16 character name was accepted"},
-      {"{\"name\":\"alice\",\"iat\":1700000000,\"exp\":1700003600}",
-       JWT_E_CLAIMS, "a token with no sub was accepted"},
-  };
+/* Claim texts that are signed correctly and still wrong: leading zeros, a '+'
+ * sign, surrounding space, an empty field, a non-integer, a 16 character name,
+ * and a name outside #47's allowlist. */
+static int test_bad_claim_shapes(void)
+{
+    struct
+    {
+        const char *claims;
+        token_result_t want;
+        const char *msg;
+    } cases[] = {
+        {"042\nalice\n1700000000\n1700003600\n", TOKEN_E_CLAIMS,
+         "a leading zero was accepted"},
+        {"+42\nalice\n1700000000\n1700003600\n", TOKEN_E_CLAIMS,
+         "a '+' sign was accepted"},
+        {"42\nalice\n1700000000\n 1700003600\n", TOKEN_E_CLAIMS,
+         "a space before a claim was accepted"},
+        {"\nalice\n1700000000\n1700003600\n", TOKEN_E_CLAIMS,
+         "an empty sub was accepted"},
+        {"42\nalice\n1700000000\n1.5\n", TOKEN_E_CLAIMS,
+         "a non-integer exp was accepted"},
+        {"42\nalice\n1700000000\n99999999999999999999\n", TOKEN_E_CLAIMS,
+         "an out-of-range exp was accepted"},
+        {"42\nabcdefghijklmnop\n1700000000\n1700003600\n", TOKEN_E_CLAIMS,
+         "a 16 character name was accepted"},
+        {"42\n\n1700000000\n1700003600\n", TOKEN_E_CLAIMS,
+         "an empty name was accepted"},
+        {"42\nali ce\n1700000000\n1700003600\n", TOKEN_E_CLAIMS,
+         "a name outside #47's allowlist was accepted"},
+    };
 
-  for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
-    char tok[JWT_MAX_LEN];
-    build_signed(tok, CANONICAL_HEADER, cases[i].pay, secret, SECRET_LEN);
-    jwt_claims_t got;
-    CHECK(jwt_verify(tok, secret, SECRET_LEN, NOW, &got) == cases[i].want,
-          cases[i].msg);
-  }
-  return 0;
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++)
+    {
+        char tok[TOKEN_MAX_LEN];
+        build_signed(tok, cases[i].claims, secret, SECRET_LEN);
+        token_claims_t got;
+        CHECK(token_verify(tok, secret, SECRET_LEN, NOW, &got) == cases[i].want,
+              cases[i].msg);
+    }
+    return 0;
 }
 
-/* === jwt_mint's own refusals === */
+/* === token_mint's own refusals === */
 
-/* The emitter has no escaper and is safe only by virtue of #47's allowlist,
- * so it re-validates rather than trusting its caller. */
-static int test_mint_rejects_names_outside_the_allowlist(void) {
-  static const char *bad[] = {"ali\"ce", "ali\\ce", "ali ce", "ali.ce", ""};
+/*
+ * The emitter has no escaper and is safe only by virtue of #47's allowlist, so
+ * it re-validates rather than trusting its caller. The newline is the case
+ * that matters most now: it is the delimiter, so a name carrying one would be
+ * claim injection rather than merely a malformed field.
+ */
+static int test_mint_rejects_names_outside_the_allowlist(void)
+{
+    static const char *bad[] = {"ali\nce", "ali ce", "ali.ce", "ali\"ce",
+                                "ali\\ce", ""};
 
-  for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
-    jwt_claims_t c = {0};
-    c.sub = 1;
-    strcpy(c.name, bad[i]);
-    c.iat = IAT;
-    c.exp = EXP;
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++)
+    {
+        token_claims_t c = {0};
+        c.sub = 1;
+        strcpy(c.name, bad[i]);
+        c.iat = IAT;
+        c.exp = EXP;
 
-    char tok[JWT_MAX_LEN];
-    CHECK(jwt_mint(tok, sizeof tok, &c, secret, SECRET_LEN) == -1,
-          "a name outside the allowlist was minted");
-    CHECK(tok[0] == '\0', "a rejected mint left something in the buffer");
-  }
-  return 0;
+        char tok[TOKEN_MAX_LEN];
+        CHECK(token_mint(tok, sizeof tok, &c, secret, SECRET_LEN) == -1,
+              "a name outside the allowlist was minted");
+        CHECK(tok[0] == '\0', "a rejected mint left something in the buffer");
+    }
+    return 0;
 }
 
 /* A name filling all 16 bytes of the field with no NUL. */
-static int test_mint_rejects_an_unterminated_name(void) {
-  jwt_claims_t c = {0};
-  c.sub = 1;
-  memset(c.name, 'a', sizeof c.name); /* all 16 bytes, no NUL */
-  c.iat = IAT;
-  c.exp = EXP;
+static int test_mint_rejects_an_unterminated_name(void)
+{
+    token_claims_t c = {0};
+    c.sub = 1;
+    memset(c.name, 'a', sizeof c.name); /* all 16 bytes, no NUL */
+    c.iat = IAT;
+    c.exp = EXP;
 
-  char tok[JWT_MAX_LEN];
-  CHECK(jwt_mint(tok, sizeof tok, &c, secret, SECRET_LEN) == -1,
-        "an unterminated name was minted");
-  return 0;
+    char tok[TOKEN_MAX_LEN];
+    CHECK(token_mint(tok, sizeof tok, &c, secret, SECRET_LEN) == -1,
+          "an unterminated name was minted");
+    return 0;
 }
 
 /* A 31 byte secret, on both sides: mint must refuse it and verify must not
- * return JWT_OK under it. */
-static int test_short_secret(void) {
-  const unsigned char short_secret[] = "0123456789abcdef0123456789abcde"; /*31*/
-  jwt_claims_t c = {0};
-  c.sub = 1;
-  strcpy(c.name, "alice");
-  c.iat = IAT;
-  c.exp = EXP;
+ * return TOKEN_OK under it. */
+static int test_short_secret(void)
+{
+    const unsigned char short_secret[] =
+        "0123456789abcdef0123456789abcde"; /*31*/
+    token_claims_t c = {0};
+    c.sub = 1;
+    strcpy(c.name, "alice");
+    c.iat = IAT;
+    c.exp = EXP;
 
-  char tok[JWT_MAX_LEN];
-  CHECK(jwt_mint(tok, sizeof tok, &c, short_secret, sizeof short_secret - 1) ==
-            -1,
-        "minted under a secret shorter than the hash output");
+    char tok[TOKEN_MAX_LEN];
+    CHECK(token_mint(tok, sizeof tok, &c, short_secret,
+                     sizeof short_secret - 1) == -1,
+          "minted under a secret shorter than the hash output");
 
-  CHECK(mint_canonical(tok) == 0, "mint failed");
-  jwt_claims_t got;
-  CHECK(jwt_verify(tok, short_secret, sizeof short_secret - 1, NOW, &got) !=
-            JWT_OK,
-        "verified under a secret shorter than the hash output");
-  return 0;
+    CHECK(mint_canonical(tok) == 0, "mint failed");
+    token_claims_t got;
+    CHECK(token_verify(tok, short_secret, sizeof short_secret - 1, NOW, &got) !=
+              TOKEN_OK,
+          "verified under a secret shorter than the hash output");
+    return 0;
 }
 
 /* An output buffer too small for the token: mint refuses rather than
  * truncating, and leaves nothing behind in it. */
-static int test_mint_refuses_a_small_buffer(void) {
-  jwt_claims_t c = {0};
-  c.sub = 42;
-  strcpy(c.name, "alice");
-  c.iat = IAT;
-  c.exp = EXP;
+static int test_mint_refuses_a_small_buffer(void)
+{
+    token_claims_t c = {0};
+    c.sub = 42;
+    strcpy(c.name, "alice");
+    c.iat = IAT;
+    c.exp = EXP;
 
-  char tok[64];
-  CHECK(jwt_mint(tok, sizeof tok, &c, secret, SECRET_LEN) == -1,
-        "a token was written into a buffer too small for it");
-  CHECK(tok[0] == '\0', "a rejected mint left something in the buffer");
-  return 0;
+    char tok[64];
+    CHECK(token_mint(tok, sizeof tok, &c, secret, SECRET_LEN) == -1,
+          "a token was written into a buffer too small for it");
+    CHECK(tok[0] == '\0', "a rejected mint left something in the buffer");
+    return 0;
 }
 
-int main(void) {
-  printf("test_jwt\n");
+int main(void)
+{
+    test_output_begin("test_token");
 
-  run("mints and verifies its own token", test_round_trip);
-  run("matches the known-answer vector", test_known_answer);
-  run("round trips every allowed name length",
-      test_every_name_length_round_trips);
+    run("mints and verifies its own token", test_round_trip);
+    run("matches the known-answer vector", test_known_answer);
+    run("writes the MAC as lowercase hex", test_mac_is_lowercase_hex);
+    run("round trips every allowed name length",
+        test_every_name_length_round_trips);
+    run("fits the widest claims it can be handed", test_widest_claims_still_fit);
 
-  run("rejects a flipped byte in each segment",
-      test_flipped_byte_in_each_segment);
-  run("rejects a token signed under another secret", test_wrong_secret);
-  run("rejects a signature that is not 32 bytes",
-      test_signature_of_the_wrong_length);
-  run("rejects malformed segment shapes", test_malformed_shapes);
+    run("rejects a flipped byte in each field", test_flipped_byte_in_each_field);
+    run("rejects a token signed under another secret", test_wrong_secret);
+    run("rejects a MAC that is not 64 characters",
+        test_signature_of_the_wrong_length);
+    run("rejects non-canonical MAC spellings", test_non_canonical_mac_spellings);
+    run("rejects malformed field shapes", test_malformed_shapes);
+    run("rejects an extra field rather than ignoring it",
+        test_extra_field_rejected);
 
-  run("rejects alg:none carrying a valid HS256 signature",
-      test_alg_none_with_a_valid_signature);
-  run("rejects other algs and a missing alg", test_other_algs_rejected);
-  run("rejects an unknown header parameter",
-      test_third_header_parameter_rejected);
-  run("ignores an unknown claim", test_fifth_claim_ignored);
+    run("expires on or after exp, with no leeway", test_expiry_boundary);
+    run("treats a missing exp as a failure, not as eternal",
+        test_missing_exp_is_not_eternal);
+    run("rejects claim values moved between fields", test_swapped_fields_fail);
+    run("rejects malformed and out-of-range claims", test_bad_claim_shapes);
 
-  run("expires on or after exp, with no leeway", test_expiry_boundary);
-  run("treats a missing exp as a failure, not as eternal",
-      test_missing_exp_is_not_eternal);
-  run("rejects a payload re-serialized with reordered keys",
-      test_reordered_payload_fails);
-  run("rejects malformed and out-of-range claims", test_bad_payload_shapes);
+    run("refuses to mint a name outside #47's allowlist",
+        test_mint_rejects_names_outside_the_allowlist);
+    run("refuses to mint an unterminated name",
+        test_mint_rejects_an_unterminated_name);
+    run("refuses a secret shorter than the hash output", test_short_secret);
+    run("refuses an output buffer too small", test_mint_refuses_a_small_buffer);
 
-  run("refuses to mint a name outside #47's allowlist",
-      test_mint_rejects_names_outside_the_allowlist);
-  run("refuses to mint an unterminated name",
-      test_mint_rejects_an_unterminated_name);
-  run("refuses a secret shorter than the hash output", test_short_secret);
-  run("refuses an output buffer too small", test_mint_refuses_a_small_buffer);
-
-  printf("%d test(s), %d failed\n", tests_run, tests_failed);
-  return tests_failed == 0 ? 0 : 1;
+    test_output_summary(tests_run, tests_failed, 0);
+    return tests_failed == 0 ? 0 : 1;
 }

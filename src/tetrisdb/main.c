@@ -1,53 +1,25 @@
-/*
- * tetrisdb - launch and provision the shared SocketRunner.
- *
- * Phase 4 (#52, amended by #58 and #60). The decision is recorded in
- * docs/adr/0002-starting-the-shared-socketrunner.md; the ordering and the full
- * step list are in docs/libtetrisauth.md.
- *
- * One-shot, three verbs, not a daemon and not run under dspawn:
- *
- *   tetrisdb start   provision, spawn the JVM and wait for readiness
- *   tetrisdb check   return whether the configured socket is reachable
- *   tetrisdb stop    SIGTERM the runner named by the directory lock
- *
- * The two things most easily got wrong, both recorded in ADR 0002:
- *
- *   - The flock on <db_dir>/.runner.lock is HELD ACROSS THE FORK AND EXEC, so
- *     the JVM owns it for exactly its own lifetime with no cleanup path to get
- *     wrong. Without it, running start twice reaches the two-JVM corruption
- *     case with no error anywhere, because SocketRunner.bind() unlinks a live
- *     runner's socket. A connect() probe is not a substitute: it races, and it
- *     guards the socket rather than the directory.
- * The readiness poll reports only the result of this invocation. Nothing in
- * the system caches runner health.
- */
-
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
-#include <semaphore.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
-#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
-#include <openssl/crypto.h>
 
+#include "libtetrisauth/auth.h"
+#include "libtetrisdb/schema.h"
+#include "libtetrisdb/socket/conf.h"
 #include "libtetrisutil/logmsg.h"
 #include "libtetrisutil/rc.h"
-#include "libtetrisauth/provision.h"
-#include "libtetrisdb/schema.h"
-#include "libtetrisdb/socket/runner.h"
-#include "../tetrislogd/logger.h"
+#include "runner.h"
+#include "tetrisd/history.h"
 
 #define STOP_WAIT_MS 10000
-#define REG_SEM_NAME "/tetrish_register"
 
 static void report(log_level_t level, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
@@ -188,117 +160,29 @@ static void stop_failed_child(pid_t pid)
 static int load_config(db_runner_opts_t *opts)
 {
     memset(opts, 0, sizeof *opts);
-    if (access(RC_PATH, R_OK) != 0)
-    {
-        report(LOG_ERROR, "configuration: cannot read %s: %s", RC_PATH,
-               strerror(errno));
-        return -1;
-    }
-    rc_get_status_t statuses[] = {
-        rc_get("db_dir", DB_DEFAULT_DIR, opts->dir, sizeof opts->dir),
-        rc_get("db_ipc", DB_DEFAULT_IPC, opts->ipc, sizeof opts->ipc),
-        rc_get("db_jar", DB_DEFAULT_JAR, opts->jar, sizeof opts->jar),
-        rc_get("db_java", DB_DEFAULT_JAVA, opts->java, sizeof opts->java),
-        rc_get("db_err_path", DB_DEFAULT_ERR_PATH, opts->err_path,
-               sizeof opts->err_path),
-        rc_get_int("db_sessions", DB_DEFAULT_SESSIONS, 1, MAX_SESSIONS,
-                   &opts->sessions),
-    };
-    for (size_t i = 0; i < sizeof statuses / sizeof statuses[0]; i++)
-        if (statuses[i] == RC_VALUE_INVALID)
-        {
-            report(LOG_ERROR, "configuration: invalid directive in %s", RC_PATH);
-            return -1;
-        }
-    FILE *config = fopen(RC_PATH, "r");
-    char line[PATH_MAX + 64];
-    while (config != NULL && fgets(line, sizeof line, config) != NULL)
-    {
-        char key[128];
-        if (sscanf(line, " %127[^ =]", key) != 1)
-            continue;
-        static const char *const allowed[] = {
-            "db_dir", "db_ipc", "db_jar", "db_java", "db_err_path",
-            "db_sessions", "db_timeout", "auth_max_attempts",
-            "auth_token_ttl", "auth_pbkdf2_iters"};
-        if (strncmp(key, "db_", 3) != 0 && strncmp(key, "auth_", 5) != 0)
-            continue;
-        int known = 0;
-        for (size_t i = 0; i < sizeof allowed / sizeof allowed[0]; i++)
-            if (strcmp(key, allowed[i]) == 0) known = 1;
-        if (!known)
-        {
-            fclose(config);
-            report(LOG_ERROR, "configuration: invalid directive '%s'", key);
-            return -1;
-        }
-    }
-    if (config != NULL) fclose(config);
+    rc_get("db_dir", DB_DEFAULT_DIR, opts->dir, sizeof opts->dir);
+    rc_get("db_ipc", DB_DEFAULT_IPC, opts->ipc, sizeof opts->ipc);
+    rc_get("db_jar", DB_DEFAULT_JAR, opts->jar, sizeof opts->jar);
+    rc_get("db_java", DB_DEFAULT_JAVA, opts->java, sizeof opts->java);
+    rc_get("db_err_path", DB_DEFAULT_ERR_PATH, opts->err_path,
+           sizeof opts->err_path);
+    rc_get_int("db_sessions", DB_DEFAULT_SESSIONS, 1, MAX_SESSIONS,
+               &opts->sessions);
     opts->recover = 1;
     return 0;
 }
 
 static int provision(const db_runner_opts_t *opts)
 {
-    char catalog[PATH_MAX + 16];
-    db_catalog_path(catalog, sizeof catalog, opts->dir);
-    FILE *existing = fopen(catalog, "r");
-    char line[PATH_MAX + 128];
-    char expected[256];
-    snprintf(expected, sizeof expected, "%s (%s)\n", LOGD_DB_TABLE,
-             LOGD_DB_SCHEMA);
-    while (existing != NULL && fgets(line, sizeof line, existing) != NULL)
-        if (strncmp(line, LOGD_DB_TABLE " (", strlen(LOGD_DB_TABLE) + 2) == 0 &&
-            strcmp(line, expected) != 0)
-        {
-            fclose(existing);
-            report(LOG_ERROR, "table '%s' has a conflicting schema", LOGD_DB_TABLE);
-            return -1;
-        }
-    if (existing != NULL) fclose(existing);
-
-    if (db_ensure_table(opts->dir, LOGD_DB_TABLE, LOGD_DB_SCHEMA) != 0)
-        return -1;
     if (db_ensure_table(opts->dir, TETRISAUTH_DB_TABLE, TETRISAUTH_DB_SCHEMA) !=
-        0)
+            0 ||
+        db_ensure_table(opts->dir, HISTORY_DB_TABLE, HISTORY_DB_SCHEMA) != 0)
     {
         report(LOG_ERROR, "could not provision database tables in %s",
                opts->dir);
         return -1;
     }
 
-    char error[256];
-    if (auth_secret_provision(".", error, sizeof error) != 0)
-    {
-        report(LOG_ERROR, "cannot provision auth/jwt_secret: %s", error);
-        return -1;
-    }
-    return 0;
-}
-
-/* The launcher lock proves no second start can reset registration underneath
- * a live runner. Recreate the cross-process registration semaphore only after
- * configuration and provisioning succeed, so a crashed session cannot leave
- * every future REGISTER request blocked at zero. */
-static int reset_registration_semaphore(void)
-{
-    const char *configured = getenv("TETRISH_REG_SEM");
-    const char *name = configured != NULL && configured[0] == '/' ? configured
-                                                                  : REG_SEM_NAME;
-    if (sem_unlink(name) != 0 && errno != ENOENT)
-    {
-        report(LOG_ERROR, "unlink semaphore %s: %s", name,
-               strerror(errno));
-        return -1;
-    }
-    sem_t *sem = sem_open(name, O_CREAT | O_EXCL, 0600, 1);
-    if (sem == SEM_FAILED)
-    {
-        report(LOG_ERROR, "create semaphore %s: %s", name,
-               strerror(errno));
-        return -1;
-    }
-    sem_close(sem);
     return 0;
 }
 
@@ -318,21 +202,17 @@ static int start(void)
     if (provision(&opts) != 0)
         goto fail_locked;
 
-    if (reset_registration_semaphore() != 0)
+    if (auth_secret_provision(".") != 0)
+    {
+        report(LOG_ERROR, "could not provision the auth secret");
         goto fail_locked;
+    }
 
     if (mkdir_parent(opts.ipc) != 0)
         goto fail_locked;
 
     if (mkdir_parent(opts.err_path) != 0)
         goto fail_locked;
-
-    if (unlink(opts.ipc) != 0 && errno != ENOENT)
-    {
-        report(LOG_ERROR, "unlink stale socket %s: %s", opts.ipc,
-               strerror(errno));
-        goto fail_locked;
-    }
 
     int err_fd = open(opts.err_path, O_WRONLY | O_CREAT | O_APPEND, 0640);
     if (err_fd < 0)
@@ -359,7 +239,6 @@ static int start(void)
     if (db_runner_wait(opts.ipc, pid, 0) != 0)
     {
         stop_failed_child(pid);
-        (void)clear_pid(lock_fd, lock_path);
         report(LOG_ERROR, "runner failed readiness; see %s", opts.err_path);
         goto fail_locked;
     }
@@ -382,16 +261,7 @@ static int check(void)
     db_runner_opts_t opts;
     if (load_config(&opts) < 0)
         return 1;
-    report(LOG_INFO, "configuration: usable");
-    unsigned char secret[64];
-    int secret_ok = auth_secret_load(".", secret, sizeof secret) >= 0;
-    OPENSSL_cleanse(secret, sizeof secret);
-    report(secret_ok ? LOG_INFO : LOG_ERROR, "secret: %s",
-           secret_ok ? "usable" : "unusable");
-    int runner_ok = db_runner_wait(opts.ipc, -1, 1) == 0;
-    report(runner_ok ? LOG_INFO : LOG_ERROR, "runner: %s",
-           runner_ok ? "reachable" : "unavailable");
-    return secret_ok && runner_ok ? 0 : 1;
+    return db_runner_wait(opts.ipc, -1, 1) == 0 ? 0 : 1;
 }
 
 static int read_lock_pid(int fd, const char *lock_path, pid_t *pid)
@@ -405,12 +275,6 @@ static int read_lock_pid(int fd, const char *lock_path, pid_t *pid)
     }
     if (n == 0)
         return 1;
-
-    if (memchr(buf, '\0', (size_t)n) != NULL)
-    {
-        report(LOG_ERROR, "%s is malformed - contains binary data", lock_path);
-        return -1;
-    }
 
     if ((size_t)n == sizeof buf)
         return -1;
@@ -449,32 +313,15 @@ static int stop(void)
             report(LOG_INFO, "already stopped");
             return 0;
         }
-        if (errno == EACCES)
-            report(LOG_ERROR, "permission failure opening %s", lock_path);
-        else
-            report(LOG_ERROR, "open %s: %s", lock_path, strerror(errno));
-        return 1;
-    }
-
-    struct stat lock_st;
-    if (fstat(fd, &lock_st) != 0 || (lock_st.st_mode & 0600) != 0600)
-    {
-        report(LOG_ERROR, "permission failure reading %s", lock_path);
-        close(fd);
+        report(LOG_ERROR, "open %s: %s", lock_path, strerror(errno));
         return 1;
     }
 
     if (flock(fd, LOCK_EX | LOCK_NB) == 0)
     {
-        pid_t stale_pid = -1;
-        int state = read_lock_pid(fd, lock_path, &stale_pid);
         int cleared = clear_pid(fd, lock_path);
         close(fd);
-        if (state == 0)
-            report(LOG_INFO, "already stopped: runner pid %ld died without clearing it",
-                   (long)stale_pid);
-        else
-            report(LOG_INFO, "already stopped: no runner pid");
+        report(LOG_INFO, "already stopped");
         return cleared == 0 ? 0 : 1;
     }
     if (errno != EWOULDBLOCK && errno != EAGAIN)
@@ -524,6 +371,15 @@ int main(int argc, char **argv)
     if (argc != 2)
     {
         fprintf(stderr, "usage: tetrisdb {start|check|stop}\n");
+        return 2;
+    }
+
+    int db_enable;
+    (void)rc_get_bool("db", 0, &db_enable);
+
+    if (db_enable == 0)
+    {
+        fprintf(stderr, "tetrisdb: db flag is disabled\n");
         return 2;
     }
 

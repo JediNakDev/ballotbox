@@ -5,7 +5,7 @@
 
 #include "proc.h"
 
-#include "../jvm.h"
+#include "libtetrisdb/jvm.h"
 #include "libtetrisdb/schema.h"
 
 #include <errno.h>
@@ -14,12 +14,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #define DB_DEFAULT_JAR "db/dist/simpledb.jar"
 #define DB_DEFAULT_JAVA "java"
 #define DB_DEFAULT_QCAP 256
 #define DB_READY "<<READY>>"
+
+/* Bounds readiness, one statement's round trip, and shutdown's reap, each
+ * freshly, when db_opts_t.timeout_ms leaves it at the default. */
+#define DB_PIPE_DEFAULT_TIMEOUT_MS 2000
 
 /* Lines consumed while waiting for the handshake before giving up. Loading a
  * catalog prints a handful; anything past this means we are not talking to a
@@ -34,6 +39,8 @@ int db_proc_spawn(db_proc_t *p, const db_opts_t *opts)
     memset(p, 0, sizeof(*p));
     p->pid = -1;
     p->in_fd = p->out.fd = -1;
+    p->timeout_ms =
+        opts->timeout_ms > 0 ? opts->timeout_ms : DB_PIPE_DEFAULT_TIMEOUT_MS;
 
     if (opts->dir[0] == '\0')
     {
@@ -99,11 +106,14 @@ int db_proc_spawn(db_proc_t *p, const db_opts_t *opts)
     p->out.fd = from_child[0];
 
     /* Wait for the handshake. Everything the catalog loader prints on the way
-     * there is startup noise, not a response, so it is skipped. */
+     * there is startup noise, not a response, so it is skipped. One deadline
+     * spans every line: it bounds the sum of the waits, not each one, so a
+     * stalled child cannot dribble out noise forever and stay under it. */
+    long long deadline = db_now_ms() + p->timeout_ms;
     char line[512];
     for (int i = 0; i < DB_HANDSHAKE_MAX; i++)
     {
-        int r = db_wire_line(&p->out, line, sizeof(line), DB_NO_DEADLINE);
+        int r = db_wire_line(&p->out, line, sizeof(line), deadline);
         if (r != DB_WIRE_LINE)
             break;
         if (strncmp(line, DB_READY, sizeof(DB_READY) - 1) == 0)
@@ -121,16 +131,18 @@ int db_proc_exec(db_proc_t *p, const char *sql, char *body, size_t body_cap)
     if (body != NULL && body_cap > 0)
         body[0] = '\0';
 
-    if (db_wire_write(p->in_fd, sql, strlen(sql), DB_NO_DEADLINE) != 0 ||
-        db_wire_write(p->in_fd, "\n", 1, DB_NO_DEADLINE) != 0)
+    long long deadline = db_now_ms() + p->timeout_ms;
+
+    if (db_wire_write(p->in_fd, sql, strlen(sql), deadline) != 0 ||
+        db_wire_write(p->in_fd, "\n", 1, deadline) != 0)
         return -1;
 
-    switch (db_wire_response(&p->out, body, body_cap, DB_NO_DEADLINE))
+    switch (db_wire_response(&p->out, body, body_cap, deadline))
     {
     case DB_OK:
         return 1;
     case DB_IO:
-    case DB_TIMEOUT: /* unreachable without a deadline; the child died */
+    case DB_TIMEOUT: /* the child died, or stalled past its deadline */
         return -1;
     default:
         return 0;
@@ -145,6 +157,30 @@ static void reap(pid_t pid)
         ;
 }
 
+/* Reap pid, but not forever: a child that will not take EOF as its cue to
+ * exit gets killed once deadline passes, then reaped for real. */
+static void reap_by(pid_t pid, long long deadline)
+{
+    for (;;)
+    {
+        int status;
+        pid_t r = waitpid(pid, &status, WNOHANG);
+        if (r == pid)
+            return;
+        if (r < 0 && errno != EINTR)
+            return;
+        if (db_now_ms() >= deadline)
+        {
+            kill(pid, SIGKILL);
+            reap(pid);
+            return;
+        }
+        struct timespec pause_for = {.tv_sec = 0, .tv_nsec = 2 * 1000000};
+        while (nanosleep(&pause_for, &pause_for) < 0 && errno == EINTR)
+            ;
+    }
+}
+
 void db_proc_close(db_proc_t *p)
 {
     if (p->pid < 0)
@@ -154,7 +190,7 @@ void db_proc_close(db_proc_t *p)
         close(p->in_fd);
         p->in_fd = -1;
     }
-    reap(p->pid);
+    reap_by(p->pid, db_now_ms() + p->timeout_ms);
     if (p->out.fd >= 0)
     {
         close(p->out.fd);

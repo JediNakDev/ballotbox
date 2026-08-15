@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 
-#include "libtetrisutil/limits.h" /* MAX_PLAYER_NAME, MAX_STANDINGS */
+#include "libtetrisutil/limits.h" /* MAX_USER_NAME, MAX_STANDINGS */
 
 /* Where a client is in its lifecycle. */
 typedef enum
@@ -34,7 +34,7 @@ typedef struct
 {
     int player_id; /* stable identity; matches SessionState.player_id */
     char
-        name[MAX_PLAYER_NAME]; /* NUL-terminated; "Player N" until real names */
+        name[MAX_USER_NAME]; /* NUL-terminated; "Player N" until real names */
     bool is_owner;             /* this row may START the round */
 } RoomMember;
 

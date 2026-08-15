@@ -295,7 +295,7 @@ static void sanitise(char *s)
 }
 
 /* Read 1 log from socket, then emit it. */
-static int serve_one(int fd, FILE *log, const logd_opts_t *opts,
+static int serve_one(int socket_fd, FILE *log, const logd_opts_t *opts,
                      logd_mirror_t *mirror, logd_stats_t *st, int flags)
 {
     union
@@ -304,7 +304,8 @@ static int serve_one(int fd, FILE *log, const logd_opts_t *opts,
         char raw[sizeof(log_msg_t) + 1];
     } buf;
 
-    ssize_t n = recvfrom(fd, buf.raw, sizeof(buf.raw), flags, NULL, NULL);
+    ssize_t n =
+        recvfrom(socket_fd, buf.raw, sizeof(buf.raw), flags, NULL, NULL);
     if (n < 0)
     {
         if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
@@ -416,14 +417,14 @@ int logd_run(const logd_opts_t *opts, logd_stats_t *stats)
     if (stats != NULL)
         *stats = local;
 
-    int fd = bind_to_socket(opts->socket_path);
-    if (fd < 0)
+    int socket_fd = bind_to_socket(opts->socket_path);
+    if (socket_fd < 0)
         return -1;
 
     FILE *log = open_log_file(opts->log_path);
     if (log == NULL)
     {
-        close(fd);
+        close(socket_fd);
         unlink(opts->socket_path);
         return -1;
     }
@@ -458,7 +459,7 @@ int logd_run(const logd_opts_t *opts, logd_stats_t *stats)
             }
         }
 
-        if (serve_one(fd, log, opts, &mirror, &local, 0) < 0)
+        if (serve_one(socket_fd, log, opts, &mirror, &local, 0) < 0)
             goto out;
 
         if (summarise(log, opts, &mirror, &local, &window, time(NULL)) < 0)
@@ -469,7 +470,7 @@ int logd_run(const logd_opts_t *opts, logd_stats_t *stats)
     rc = 0;
     for (long i = 0; i < LOGD_DRAIN_MAX; i++)
     {
-        int r = serve_one(fd, log, opts, &mirror, &local, MSG_DONTWAIT);
+        int r = serve_one(socket_fd, log, opts, &mirror, &local, MSG_DONTWAIT);
         if (r == 1)
             continue;
         if (r < 0)
@@ -490,7 +491,7 @@ out:
 
     db_stop(mirror.db, &local.db_dropped, &local.db_errors);
     close_log_file(log);
-    close(fd);
+    close(socket_fd);
     unlink(opts->socket_path);
 
     if (stats != NULL)

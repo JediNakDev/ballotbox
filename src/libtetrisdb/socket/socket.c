@@ -3,7 +3,7 @@
  * @brief One connection to the shared SocketRunner.
  */
 
-#include "libtetrisdb/socket/runner.h"
+#include "libtetrisdb/socket/conf.h"
 #include "libtetrisdb/socket/db.h"
 #include "libtetrisutil/rc.h"
 

@@ -27,7 +27,7 @@
 #include "libballotclient/voter.h"
 #include "libtetrisdb/schema.h"
 #include "libtetrisdb/socket/conf.h"
-#include "libtetrisdb/socket/runner.h"
+#include "tetrisdb/runner.h"
 
 #define BALLOTD_BIN "bin/ballotd"
 #define BALLOT_SESSION_BIN "bin/ballot_session"
@@ -239,6 +239,7 @@ static int fixture_start(void) {
     if (copy_file(target, path, 0600) != 0) return -1;
   }
   snprintf(rc, sizeof rc,
+           "db = true\n"
            "db_dir = var/db\n"
            "db_ipc = var/run/tetrisdb.sock\n"
            "db_jar = %s/db/dist/simpledb.jar\n"

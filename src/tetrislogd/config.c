@@ -4,8 +4,6 @@
 
 #include <limits.h>
 
-#define DEFAULT_SOCKET_PATH "var/run/tetrislogd.sock"
-#define DEFAULT_LOG_PATH "var/log/tetrisd.log"
 #define DEFAULT_DB_DIR "var/db_log"
 #define DEFAULT_DB_JAR "db/dist/simpledb.jar"
 #define DEFAULT_DB_JAVA "java"
@@ -19,15 +17,17 @@ int config(logd_opts_t *opts)
     if (opts == NULL)
         return -1;
 
-    rc_get("log_path", DEFAULT_LOG_PATH, opts->log_path, sizeof opts->log_path);
-    rc_get("log_ipc", DEFAULT_SOCKET_PATH, opts->socket_path,
-           sizeof opts->socket_path);
+    if (rc_get("log_path", NULL, opts->log_path, sizeof opts->log_path) !=
+            RC_VALUE_FOUND ||
+        rc_get("log_ipc", NULL, opts->socket_path, sizeof opts->socket_path) !=
+            RC_VALUE_FOUND)
+        return -1;
     rc_get("log_db_dir", DEFAULT_DB_DIR, opts->db.dir, sizeof opts->db.dir);
     rc_get("log_db_jar", DEFAULT_DB_JAR, opts->db.jar, sizeof opts->db.jar);
     rc_get("log_db_java", DEFAULT_DB_JAVA, opts->db.java, sizeof opts->db.java);
     (void)rc_get_int("log_summary_secs", DEFAULT_SUMMARY_SECS, 0,
                      MAX_SUMMARY_SECS, &opts->summary_secs);
-    (void)rc_get_bool("log_db", 0, &opts->db_enable);
+    (void)rc_get_bool("db", 0, &opts->db_enable);
 
     int queue_cap;
     (void)rc_get_int("log_db_queue", DEFAULT_DB_QUEUE_CAP, 1, INT_MAX,

@@ -10,8 +10,8 @@
  * Usage: seedgen_jwt <corpus-dir>
  */
 
-#include "libtetrisauth/jwt.h"
 #include "jwt_fuzz_secret.h"
+#include "libtetrisauth/token.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -49,7 +49,8 @@ int main(int argc, char **argv) {
       /* The name cap is 15 characters plus NUL (#47). */
       {"max_name", {4, "abcdefghijklmno", JWT_FUZZ_NOW - 60, JWT_FUZZ_EXP}},
       {"min_name", {5, "a", JWT_FUZZ_NOW - 60, JWT_FUZZ_EXP}},
-      {"big_sub", {9223372036854775807LL, "dave", JWT_FUZZ_NOW - 60, JWT_FUZZ_EXP}},
+      {"big_sub",
+       {9223372036854775807LL, "dave", JWT_FUZZ_NOW - 60, JWT_FUZZ_EXP}},
   };
 
   int failures = 0;
@@ -61,7 +62,8 @@ int main(int argc, char **argv) {
       failures++;
       continue;
     }
-    if (write_seed(dir, cases[i].name, token) != 0) failures++;
+    if (write_seed(dir, cases[i].name, token) != 0)
+      failures++;
 
     /* One tampered copy per token: same structure, last character bumped, so
      * the corpus carries a signature-mismatch case that is otherwise a
@@ -70,7 +72,8 @@ int main(int argc, char **argv) {
       size_t n = strlen(token);
       if (n > 0) {
         token[n - 1] = (token[n - 1] == 'A') ? 'B' : 'A';
-        if (write_seed(dir, "valid_bad_sig", token) != 0) failures++;
+        if (write_seed(dir, "valid_bad_sig", token) != 0)
+          failures++;
       }
     }
   }

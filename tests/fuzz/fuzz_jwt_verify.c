@@ -4,7 +4,7 @@
  * The token is the one input to the auth path that a caller hands over
  * verbatim, before anything about them is known. jwt.c does its own
  * base64url decode and its own JSON shape walk (it may include nothing
- * outside OpenSSL - see playername.h's note about the duplicated allowlist),
+ * outside OpenSSL - see name.h's note about the duplicated allowlist),
  * so this is hand-written parsing of hostile bytes with a security decision
  * on the other side of it.
  *
@@ -29,14 +29,14 @@
  * correct and anything else is a false rejection.
  */
 
-#include "libtetrisauth/jwt.h"
 #include "fuzz_support.h"
 #include "jwt_fuzz_secret.h"
+#include "libtetrisauth/token.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-#define SECRET   JWT_FUZZ_SECRET
+#define SECRET JWT_FUZZ_SECRET
 #define FUZZ_NOW JWT_FUZZ_NOW
 
 /* Could jwt_mint have produced exactly this token? Re-minting under the same
@@ -53,9 +53,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   /* jwt_verify takes a NUL-terminated string; the wire never hands it one,
    * the caller does. Terminate on the heap so a read past the end of the
    * token is an ASan report rather than a walk into the next allocation. */
-  if (size > JWT_MAX_LEN * 4) return 0;
+  if (size > JWT_MAX_LEN * 4)
+    return 0;
   char *token = (char *)malloc(size + 1);
-  if (!token) return 0;
+  if (!token)
+    return 0;
   memcpy(token, data, size);
   token[size] = '\0';
 
@@ -73,7 +75,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     FUZZ_CHECK(fuzz_is_cstr(out.name, sizeof out.name));
     FUZZ_CHECK(out.exp > FUZZ_NOW);
   } else {
-    /* jwt.h: "Zeroed on entry and on every failure." */
+    /* token.h: "Zeroed on entry and on every failure." */
     jwt_claims_t zero;
     memset(&zero, 0, sizeof zero);
     FUZZ_CHECK(memcmp(&out, &zero, sizeof out) == 0);

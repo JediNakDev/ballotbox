@@ -93,12 +93,10 @@ int db_wire_line(db_wire_t *w, char *out, size_t cap, long long deadline)
             }
             if (r == 0)
             {
-                /* EOF: hand back a partial trailing line if we have one. */
-                if (n > 0)
-                {
-                    out[n] = '\0';
-                    return DB_WIRE_LINE;
-                }
+                /* EOF mid-line is not a line: this reads '\n'-terminated
+                 * lines only, and a peer that closes before the terminator
+                 * leaves nothing well-formed to hand back - the caller must
+                 * see this as the connection ending, not as one more line. */
                 return DB_WIRE_EOF;
             }
             w->len = (size_t)r;

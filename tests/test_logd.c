@@ -20,6 +20,8 @@
 #include "libtetrisutil/logmsg.h"
 
 #define LOGD_BIN    "bin/tetrislogd"
+#define TEST_ROOT   "var/logd_test"
+#define TEST_RC_PATH TEST_ROOT "/.tetrishrc"
 #define SOCK_PATH   "var/run/test_logd.sock"
 #define LOG_PATH    "var/log/test_logd.log"
 
@@ -92,6 +94,22 @@ static int slurp(const char *path, char *buf, size_t cap)
     return 0;
 }
 
+static int write_config(const char *socket_path, const char *level)
+{
+    (void)mkdir(TEST_ROOT, 0700);
+    FILE *f = fopen(TEST_RC_PATH, "w");
+    if (f == NULL)
+        return -1;
+    int rc = fprintf(f,
+                     "log_ipc = %s\n"
+                     "log_path = %s\n"
+                     "log_level = %s\n"
+                     "log_summary_secs = 0\n"
+                     "db = false\n",
+                     socket_path, LOG_PATH, level);
+    return fclose(f) == 0 && rc > 0 ? 0 : -1;
+}
+
 /* Start the daemon with the given extra argument pair (may be NULL) and wait
  * until its socket is bound. Returns the child pid, or -1. */
 static pid_t start_logd(const char *extra_flag, const char *extra_value)
@@ -99,24 +117,19 @@ static pid_t start_logd(const char *extra_flag, const char *extra_value)
     unlink(SOCK_PATH);
     unlink(LOG_PATH);
 
+    const char *level = "debug";
+    if (extra_flag != NULL && strcmp(extra_flag, "-l") == 0 &&
+        extra_value != NULL)
+        level = extra_value;
+    if (write_config(SOCK_PATH, level) != 0)
+        return -1;
+
     pid_t pid = fork();
     if (pid < 0)
         return -1;
     if (pid == 0) {
-        char *argv[10];
-        int i = 0;
-        argv[i++] = (char *)LOGD_BIN;
-        argv[i++] = (char *)"-s";
-        argv[i++] = (char *)SOCK_PATH;
-        argv[i++] = (char *)"-f";
-        argv[i++] = (char *)LOG_PATH;
-        if (extra_flag != NULL) {
-            argv[i++] = (char *)extra_flag;
-            if (extra_value != NULL)
-                argv[i++] = (char *)extra_value;
-        }
-        argv[i] = NULL;
-        execv(LOGD_BIN, argv);
+        setenv("TETRISH_ROOT", TEST_ROOT, 1);
+        execl(LOGD_BIN, LOGD_BIN, (char *)NULL);
         perror("execv " LOGD_BIN);
         _exit(127);
     }
@@ -369,10 +382,13 @@ static int test_refuses_non_socket(void)
     CHECK(write(fd, "precious", 8) == 8, "cannot write decoy");
     close(fd);
 
+    CHECK(write_config(decoy, "debug") == 0, "cannot write config");
+
     pid_t pid = fork();
     CHECK(pid >= 0, "fork failed");
     if (pid == 0) {
-        execl(LOGD_BIN, LOGD_BIN, "-s", decoy, "-f", LOG_PATH, (char *)NULL);
+        setenv("TETRISH_ROOT", TEST_ROOT, 1);
+        execl(LOGD_BIN, LOGD_BIN, (char *)NULL);
         _exit(127);
     }
     int status = 0;

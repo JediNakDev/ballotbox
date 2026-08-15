@@ -54,7 +54,7 @@
 #define MAX_STANDINGS 8
 
 /* Display name, including the terminating NUL. */
-#define MAX_PLAYER_NAME 16
+#define MAX_USER_NAME 16
 
 /* ---- what a directive can hold ------------------------------------------ */
 /*

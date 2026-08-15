@@ -1,9 +1,12 @@
+#include "libtetrisutil/rc.h"
 #include "logger.h"
 
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+
+logd_opts_t opts;
 
 static void on_terminate(int sig)
 {
@@ -14,6 +17,8 @@ static void on_terminate(int sig)
 static void on_hangup(int sig)
 {
     (void)sig;
+    rc_reload();
+    (void)config(&opts);
     logd_reopen();
 }
 
@@ -40,41 +45,12 @@ static int install(int sig, void (*handler)(int))
 
 int main(int argc, char **argv)
 {
-    logd_opts_t opts;
+    (void)argc;
+    (void)argv;
+
     memset(&opts, 0, sizeof opts);
     if (config(&opts) < 0)
         return 1;
-
-    int opt;
-    while ((opt = getopt(argc, argv, "s:f:l:h")) != -1)
-    {
-        switch (opt)
-        {
-        case 's':
-            snprintf(opts.socket_path, sizeof opts.socket_path, "%s", optarg);
-            break;
-        case 'f':
-            snprintf(opts.log_path, sizeof opts.log_path, "%s", optarg);
-            break;
-        case 'l':
-            if (log_level_parse(optarg, &opts.min_level) < 0)
-            {
-                fprintf(stderr, "tetrislogd: unknown level '%s'\n", optarg);
-                return 2;
-            }
-            break;
-        case 'h':
-            printf("usage: %s [-s socket] [-f logfile] [-l debug|info|warn|error]\n", argv[0]);
-            return 0;
-        default:
-            return 2;
-        }
-    }
-    if (optind != argc)
-    {
-        fprintf(stderr, "tetrislogd: unexpected argument '%s'\n", argv[optind]);
-        return 2;
-    }
 
     /* A sender that vanishes mid-send must not kill us; we never write to a
      * pipe, but a supervisor closing our stdout could otherwise be fatal. */

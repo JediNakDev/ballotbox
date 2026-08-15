@@ -83,7 +83,8 @@ dirs:
 	@mkdir -p $(BIN_DIR) $(LIB_DIR) var/log var/run
 
 # === Libraries ===
-LIBTETRISAUTH_SRCS   := $(wildcard src/libtetrisauth/*.c)
+LIBTETRISAUTH_SRCS   := $(wildcard src/libtetrisauth/*.c) \
+                        $(wildcard src/libtetrisauth/lib/*.c)
 LIBTETRISSH_SRCS     := $(wildcard src/libtetrissh/*.c)
 LIBHTTTP_SRCS        := $(wildcard src/libhtttp/*.c)
 LIBBALLOTBRAIN_SRCS  := $(wildcard src/libballotbrain/*.c)
@@ -158,6 +159,10 @@ $(BIN_DIR)/ballotd: src/ballotd/main.c src/ballotd/dispatch.c src/ballotd/contro
 $(BIN_DIR)/ballot_session: src/ballotd/session.c $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) $(LDLIBS)
 
+# Vendored byte-for-byte from tetriSH, whose (void)config(&opts) does not
+# satisfy warn_unused_result. Relaxed here rather than in main.c, which would
+# re-diverge a file that is currently identical between the two trees.
+$(BIN_DIR)/tetrislogd: CFLAGS += -Wno-error=unused-result
 $(BIN_DIR)/tetrislogd: $(wildcard src/tetrislogd/*.c) $(LIBS) $(HEADERS)
 	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
@@ -184,7 +189,7 @@ $(BIN_DIR)/ballotu: src/ballotu/ballotu.c $(LIBS) $(HEADERS)
 UNITY_DIR   := external/2026-pa1-50005-6767/tests/unity
 TEST_SRCS   := $(wildcard tests/unit/test_*.c)
 TEST_BINS   := $(TEST_SRCS:tests/unit/%.c=$(BIN_DIR)/%)
-TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR) -Itests/unit/support
+TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR) -Itests/unit/support -Itests
 
 # libballotclient reuses symbols from libballotbrain, so it must precede it.
 # -lhtttp is for test_codec, which exercises the wire codec directly against
@@ -202,7 +207,7 @@ TEST_CFLAGS := $(CFLAGS) -I$(UNITY_DIR) -Itests/unit/support
 # resolve.
 # -ltetrisutil: bc_fold_eligible (admin.c) calls libtetrisutil/playername.c's
 # -ltetrisutil: bc_fold_eligible (admin.c) calls libtetrisutil/playername.c's
-# player_name_ok/player_name_fold directly (the same fold every real
+# user_name_ok/user_name_fold directly (the same fold every real
 # username goes through), so libballotclient.a now has an unresolved
 # reference into libtetrisutil.a for every test that links it - which, per the
 # note above, is all of them.
@@ -222,17 +227,17 @@ $(BIN_DIR)/test_%: tests/unit/test_%.c $(wildcard tests/unit/support/*.h) $(UNIT
 # rather than tests/unit/, so it needs an explicit rule to beat the pattern
 # rule above. It spawns a real PipeRunner child and skips those cases when
 # java or the jar is missing, so it stays runnable on a machine without a JVM.
-$(BIN_DIR)/test_db: tests/test_db.c $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(HEADERS)
-	$(CC) $(CFLAGS) tests/test_db.c -o $@ $(LDFLAGS) -ltetrisdb -ltetrisutil -lpthread
+$(BIN_DIR)/test_db: tests/test_db.c src/tetrisdb/runner.c $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(HEADERS)
+	$(CC) $(CFLAGS) -Itests -Isrc $(filter %.c,$^) -o $@ $(LDFLAGS) -ltetrisdb -ltetrisutil -lpthread
 
-$(BIN_DIR)/test_auth: tests/test_auth.c $(LIBS) $(HEADERS)
-	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
+$(BIN_DIR)/test_auth: tests/test_auth.c src/tetrisdb/runner.c $(LIBS) $(HEADERS)
+	$(CC) $(CFLAGS) -Itests -Isrc/libtetrisauth/lib -Isrc/tetrisdb $(filter %.c,$^) -o $@ $(LDFLAGS) $(LDLIBS)
 
-$(BIN_DIR)/test_jwt: tests/test_jwt.c src/libtetrisauth/jwt.c $(LIB_DIR)/libtetrisutil.a $(HEADERS)
-	$(CC) $(CFLAGS) $(filter %.c,$^) -o $@ $(LDFLAGS) -ltetrisutil -lcrypto
+$(BIN_DIR)/test_jwt: tests/test_jwt.c src/libtetrisauth/lib/token.c src/libtetrisauth/lib/hex.c $(LIB_DIR)/libtetrisutil.a $(HEADERS)
+	$(CC) $(CFLAGS) -Itests -Isrc/libtetrisauth/lib $(filter %.c,$^) -o $@ $(LDFLAGS) -ltetrisutil -lcrypto
 
 $(BIN_DIR)/test_rc: tests/test_rc.c src/tetrislogd/config.c $(BIN_DIR)/tetrislogd $(LIB_DIR)/libtetrisauth.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(HEADERS)
-	$(CC) $(CFLAGS) tests/test_rc.c src/tetrislogd/config.c -o $@ $(LDFLAGS) -ltetrisauth -ltetrisdb -ltetrisutil
+	$(CC) $(CFLAGS) -Itests -Isrc/libtetrisauth/lib tests/test_rc.c src/tetrislogd/config.c -o $@ $(LDFLAGS) -ltetrisauth -ltetrisdb -ltetrisutil
 
 $(BIN_DIR)/test_tetrisdb: tests/test_tetrisdb.c $(BIN_DIR)/tetrisdb $(HEADERS)
 	$(CC) $(CFLAGS) tests/test_tetrisdb.c -o $@ -lpthread
@@ -247,19 +252,18 @@ $(BIN_DIR)/test_logd: tests/test_logd.c $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/te
 # prerequisites rather than just runtime assumptions (same story as
 # test_logd needing bin/tetrislogd). Needs libtetrissh/libhtttp/libballot*
 # directly for the client-side handshake and codec calls the test makes.
-$(BIN_DIR)/test_ballotd: tests/test_ballotd.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
-	$(CC) $(CFLAGS) tests/test_ballotd.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -ltetrisutil -lssl -lcrypto -lpthread
-	$(CC) $(CFLAGS) tests/test_ballotd.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -ltetrisutil -lssl -lcrypto -lpthread
+$(BIN_DIR)/test_ballotd: tests/test_ballotd.c src/tetrisdb/runner.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
+	$(CC) $(CFLAGS) -Isrc $(filter %.c,$^) -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -ltetrisutil -lssl -lcrypto -lpthread
 
 # Real-process E2E for the client side of the same picture: drives the real
 # bcl_connect/bu_join/bcl_send (src/libballotclient/transport.c) - the same
 # calls ballotu.c makes - against a real bin/ballotd, rather than a
 # hand-rolled socket harness like test_ballotd.c's.
-$(BIN_DIR)/test_client_transport: tests/test_client_transport.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
-	$(CC) $(CFLAGS) tests/test_client_transport.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -ltetrisutil -lssl -lcrypto -lpthread
+$(BIN_DIR)/test_client_transport: tests/test_client_transport.c src/tetrisdb/runner.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(HEADERS)
+	$(CC) $(CFLAGS) -Isrc $(filter %.c,$^) -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -ltetrisutil -lssl -lcrypto -lpthread
 
-$(BIN_DIR)/test_system_e2e: tests/test_system_e2e.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(BIN_DIR)/tetrisdb $(HEADERS)
-	$(CC) $(CFLAGS) tests/test_system_e2e.c -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -ltetrisutil -lssl -lcrypto -lpthread
+$(BIN_DIR)/test_system_e2e: tests/test_system_e2e.c src/tetrisdb/runner.c $(LIB_DIR)/libtetrissh.a $(LIB_DIR)/libhtttp.a $(LIB_DIR)/libballotclient.a $(LIB_DIR)/libballotbrain.a $(LIB_DIR)/libtetrisdb.a $(LIB_DIR)/libtetrisutil.a $(BIN_DIR)/ballotd $(BIN_DIR)/ballot_session $(BIN_DIR)/tetrisdb $(HEADERS)
+	$(CC) $(CFLAGS) -Isrc $(filter %.c,$^) -o $@ $(LDFLAGS) -lballotclient -lballotbrain -ltetrissh -lhtttp -ltetrisdb -ltetrisutil -lssl -lcrypto -lpthread
 
 # Bottom-up integration (presentation deck's "Bottom-up integration" slide):
 # one cast-vote request, integrated one real component at a time - leaf
@@ -392,7 +396,7 @@ FUZZ_UNDER_TEST_fuzz_jwt_verify     := src/libtetrisauth/jwt.c
 FUZZ_UNDER_TEST_fuzz_rows           := src/libtetrisdb/socket/rows.c
 FUZZ_UNDER_TEST_fuzz_rc_line        := src/libtetrisutil/rc.c
 FUZZ_UNDER_TEST_fuzz_rc_bind        := src/libtetrisutil/rc.c
-FUZZ_UNDER_TEST_fuzz_playername     := src/libtetrisutil/playername.c
+FUZZ_UNDER_TEST_fuzz_playername     := src/libtetrisutil/name.c
 # ctl_frame.h is header-only (static inline both ends share), so the harness
 # IS the translation unit under test.
 FUZZ_UNDER_TEST_fuzz_ctl_frame      :=

@@ -29,7 +29,7 @@
 
 #include "libballotclient/voter.h"
 #include "libtetrisui/tetrisui.h"
-#include "libtetrisutil/playername.h"
+#include "libtetrisutil/name.h"
 
 #include <signal.h>
 #include <stdbool.h>
@@ -288,10 +288,10 @@ static int screen_credential_flow(bool registering) {
       return 0; /* cancelled: back to the Log in / Register menu */
     }
 
-    char folded[MAX_PLAYER_NAME];
+    char folded[MAX_USER_NAME];
     size_t ulen = strlen(values[0]);
-    if (!player_name_ok(values[0], ulen) ||
-        player_name_fold(folded, sizeof folded, values[0], ulen) != 0) {
+    if (!user_name_ok(values[0], ulen) ||
+        user_name_fold(folded, sizeof folded, values[0], ulen) != 0) {
       error = "Username must be 1-15 characters: letters, digits, _ or -.";
       start_field = 0;
       continue;

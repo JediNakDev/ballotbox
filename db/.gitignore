@@ -13,6 +13,8 @@ log
 
 # Package Files #
 *.jar
+!lib/jline-0.9.94.jar
+!lib/zql.jar
 
 *.war
 *.nar

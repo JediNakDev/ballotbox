@@ -23,7 +23,7 @@ bb_result_t bc_build_transition(bcl_op_t op, const char *election_id, bcl_reques
 
 /*
  * Fold *count entries of `out` (a CREATE config's eligible-voter list) the
- * same way libtetrisauth folds every real username (player_name_fold), then
+ * same way libtetrisauth folds every real username (user_name_fold), then
  * deduplicate case-insensitively, keeping first-occurrence order and
  * shrinking *count to match. So "Alice, alice, ALICE" becomes one "alice" -
  * matching what the server's cert_name will actually be for that voter
